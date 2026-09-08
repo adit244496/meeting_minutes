@@ -1,0 +1,43 @@
+# systemd unit for the Meeting Minutes background worker.
+#
+#   sudo cp meeting_minutes_worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now meeting_minutes_worker
+#   journalctl -u meeting_minutes_worker -f   # transcription errors appear here
+#
+# Transcription and minutes generation run here, not in the API - a meeting can
+# take minutes to process and must not block a request. The API queues the job
+# on Redis and this picks it up.
+#
+# --beat also runs the daily retention sweep (deletes recordings past
+# RECORDING_RETENTION_DAYS; transcripts and minutes are kept). Correct for a
+# single worker. If you ever run more than one, drop --beat here and give beat
+# its own unit, or the sweep fires once per worker.
+
+[Unit]
+Description=Meeting Minutes worker (Celery + retention scheduler)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=srvadmin
+Group=srvadmin
+WorkingDirectory=/home/srvadmin/meeting_minutes/meeting_minutes/backend
+EnvironmentFile=/home/srvadmin/meeting_minutes/meeting_minutes/backend/.env
+ExecStart=/home/srvadmin/meeting_minutes/meeting_minutes/backend/venv/bin/python -m celery \
+    -A app.worker.celery_app.celery worker \
+    --beat \
+    --schedule=/home/srvadmin/meeting_minutes/meeting_minutes/backend/celerybeat-schedule \
+    --loglevel=info \
+    --concurrency=2
+Restart=on-failure
+RestartSec=10
+# A long meeting may be mid-transcription; give it room to finish on stop.
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target

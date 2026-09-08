@@ -1,0 +1,42 @@
+# systemd unit for the Meeting Minutes API.
+#
+#   sudo cp meeting_minutes.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now meeting_minutes
+#   sudo systemctl status meeting_minutes
+#   journalctl -u meeting_minutes -f          # logs
+#
+# Paths assume the checkout at ~srvadmin/meeting_minutes/meeting_minutes.
+# FastAPI (ASGI), so it runs under uvicorn.
+#
+# This unit serves the API only. Transcription and minutes run in a separate
+# worker - see meeting_minutes_worker.service. Both must be running.
+
+[Unit]
+Description=Meeting Minutes API (FastAPI)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+# PostgreSQL may still be replaying its WAL just after a reboot, so allow a
+# generous number of restarts before systemd gives up. These are [Unit]
+# directives - systemd ignores them if placed under [Service].
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=srvadmin
+Group=srvadmin
+WorkingDirectory=/home/srvadmin/meeting_minutes/meeting_minutes/backend
+EnvironmentFile=/home/srvadmin/meeting_minutes/meeting_minutes/backend/.env
+ExecStart=/home/srvadmin/meeting_minutes/meeting_minutes/backend/venv/bin/python -m uvicorn app.main:app \
+    --host 0.0.0.0 \
+    --port 8017 \
+    --workers 2 \
+    --proxy-headers \
+    --forwarded-allow-ips='*'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

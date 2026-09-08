@@ -16,11 +16,12 @@ Redis. Recordings on local disk. No GPU required.
 
 ## Deploying to a server
 
-See **[`deploy/README.md`](deploy/README.md)** — systemd units, an nginx site,
-and a runbook for a native install on a server that already runs nginx and
-Postgres. That is the recommended production path; this app is now an ordinary
-Python service (20 packages plus ffmpeg, no ML runtime), so containerising it
-buys little on a host already set up that way.
+See **[`DEPLOYMENT.md`](DEPLOYMENT.md)** — native install on port **8017**,
+with `meeting_minutes.service`, `meeting_minutes_worker.service` and
+`meeting_minutes.nginx.conf` alongside it. That is the recommended production
+path; this app is an ordinary Python service (20 packages plus ffmpeg, no ML
+runtime), so containerising it buys little on a host already running nginx and
+Postgres.
 
 Docker below stays the easiest way to run it locally.
 
