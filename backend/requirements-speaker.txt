@@ -1,0 +1,8 @@
+# Optional: speaker identification (matching voices to enrolled people).
+#
+# ~2GB installed, almost all of it torch. Not needed for transcription or
+# minutes, and not needed for diarization either - "Speaker 1/2/3" comes free
+# in the ASR provider's response.
+#
+# Install by building with:  --build-arg WITH_SPEAKER_ID=true
+speechbrain==1.0.2

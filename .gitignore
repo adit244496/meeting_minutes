@@ -1,0 +1,29 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+node_modules/
+dist/
+samples/*
+!samples/.gitkeep
+!samples/RECORDING_SCRIPT.md
+!samples/generate_test_audio.py
+pretrained_models/
+*.wav
+*.mp3
+*.m4a
+
+data/recordings/
+
+# local data
+data/
+*.log
+.DS_Store
+.vscode/
+.idea/
+
+# celery runtime state
+celerybeat-schedule*
+celerybeat.pid

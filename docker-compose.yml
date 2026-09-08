@@ -1,0 +1,89 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: mm
+      POSTGRES_PASSWORD: mm
+      POSTGRES_DB: meeting_minutes
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mm -d meeting_minutes"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+      args:
+        # true adds torch + speechbrain (~2GB) for speaker identification
+        WITH_SPEAKER_ID: "false"
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./samples:/samples
+      - ./data:/data
+      - modelcache:/models
+    ports:
+      - "8000:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  worker:
+    build:
+      context: ./backend
+      args:
+        WITH_SPEAKER_ID: "false"
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./samples:/samples
+      - ./data:/data
+      - modelcache:/models
+    # -B runs the beat scheduler inside the worker: one process, and the daily
+    # retention sweep needs no separate service. Run a dedicated beat container
+    # instead if you ever scale to more than one worker.
+    command: celery -A app.worker.celery_app.celery worker --beat --loglevel=info --concurrency=2
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      # Anonymous volume so the container keeps its own Linux-native
+      # node_modules. Without this, a host `npm install` (Windows/macOS)
+      # bind-mounts platform-specific esbuild/rollup binaries into Linux and
+      # Vite fails to start.
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8000
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+
+volumes:
+  pgdata:
+  modelcache:
