@@ -1,0 +1,38 @@
+[Unit]
+Description=Meeting Minutes worker (Celery + retention scheduler)
+Documentation=https://github.com/adit244496/meeting_minutes
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=meetingminutes
+Group=meetingminutes
+WorkingDirectory=/opt/meeting-minutes/backend
+EnvironmentFile=/opt/meeting-minutes/.env
+
+# --beat runs the daily retention sweep in-process. Correct for a single
+# worker; run a separate beat unit if you ever scale to more than one, or the
+# sweep fires once per worker.
+# --schedule must point somewhere writable, since ProtectSystem=strict makes
+# the working directory read-only.
+ExecStart=/opt/meeting-minutes/venv/bin/celery \
+    -A app.worker.celery_app.celery worker \
+    --beat \
+    --schedule=/var/lib/meeting-minutes/celerybeat-schedule \
+    --loglevel=info \
+    --concurrency=2
+
+Restart=on-failure
+RestartSec=10
+# A long meeting can be mid-transcription; give it room to finish.
+TimeoutStopSec=300
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/meeting-minutes
+
+[Install]
+WantedBy=multi-user.target
