@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
 from app import storage
@@ -88,3 +90,22 @@ def health() -> dict:
         "asr_provider": settings.asr_provider,
         "minutes_model": settings.anthropic_model,
     }
+
+
+# Serve the built frontend, if it is there.
+#
+# Mounted last on purpose: FastAPI matches routes in the order they are added,
+# so every /api route and /health above take precedence over this catch-all.
+# With no build present (local development, where Vite serves the frontend on
+# its own port) this is skipped entirely.
+#
+# The frontend uses hash routing, so every client-side route is "/#/meetings"
+# and the server only ever sees "/". That is why no SPA rewrite rule is needed
+# here - an unknown path like /foo returns a plain 404, which is correct.
+# Switching the frontend to BrowserRouter would require adding that fallback.
+_dist = Path(settings.frontend_dist).resolve() if settings.frontend_dist else None
+if _dist and _dist.is_dir():
+    app.mount("/", StaticFiles(directory=str(_dist), html=True), name="frontend")
+    log.info("Serving frontend from %s", _dist)
+else:
+    log.info("No frontend build at %s - API only", settings.frontend_dist)

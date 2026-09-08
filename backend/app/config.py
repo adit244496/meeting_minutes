@@ -6,6 +6,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Built frontend. When this directory exists the API serves it directly, so
+    # the app works on a bare IP with no nginx in front. Relative to the backend
+    # working directory. Empty string disables it.
+    frontend_dist: str = "../frontend/dist"
+
     secret_key: str = "dev-secret-change-me"
     admin_email: str = "admin@example.com"
     admin_password: str = "changeme123"

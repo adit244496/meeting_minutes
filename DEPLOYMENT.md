@@ -3,17 +3,22 @@
 Native install on the shared Ubuntu server, matching the pattern used by the
 other apps. Port **8017**.
 
+Reachable at **http://&lt;server-ip&gt;:8017** with no nginx involved — the API
+serves the built frontend itself, the same way the hotel dashboard does. Add
+nginx later when it gets a domain and TLS (step 8).
+
 Two services, not one: the API, and a background worker that does the
-transcription. Both must be running.
+transcription. **Both must be running** — without the worker, meetings upload
+and then sit at "uploaded" forever.
 
 ```
-browser ──► nginx :80/:443 ──┬─► static frontend  (frontend/dist)
-                             └─► /api  ──► uvicorn :8017
-                                              │  queues job
-                                              ▼
-                                        Redis ──► celery worker
-                                                     ├─ Gemini  (transcript)
-                                                     └─ Claude  (minutes)
+browser ──► uvicorn :8017 ──┬─► frontend/dist  (served directly)
+                            └─► /api
+                                   │  queues job
+                                   ▼
+                             Redis ──► celery worker
+                                          ├─ Gemini  (transcript)
+                                          └─ Claude  (minutes)
 ```
 
 ---
@@ -101,7 +106,8 @@ password containing special characters must be URL-encoded inside
 
 ## 5. Frontend build
 
-`VITE_API_URL` is left empty so the app calls its own origin.
+`VITE_API_URL` is left empty so the app calls its own origin — which works
+whether it is reached on a bare IP or through nginx later.
 
 ```bash
 cd ~/meeting_minutes/meeting_minutes/frontend
@@ -109,7 +115,9 @@ npm ci
 VITE_API_URL= npm run build
 ```
 
-Produces `frontend/dist`, which nginx serves directly.
+Produces `frontend/dist`. The API picks it up automatically at startup and
+serves it; if the directory is missing the API still runs, just without a UI.
+The startup log says which happened.
 
 ## 6. Services
 
@@ -121,9 +129,22 @@ sudo systemctl enable --now meeting_minutes meeting_minutes_worker
 systemctl status meeting_minutes meeting_minutes_worker
 ```
 
-## 7. nginx
+## 7. Open the port and verify
 
-Change `server_name` in the config first, then:
+Add an inbound rule for TCP **8017** on the VM's Network Security Group.
+
+```bash
+curl -s localhost:8017/health         # {"status":"ok","asr_provider":"gemini",...}
+journalctl -u meeting_minutes -f      # should log "Serving frontend from ..."
+journalctl -u meeting_minutes_worker -f
+```
+
+Then open **http://&lt;server-ip&gt;:8017** and sign in with `ADMIN_EMAIL` /
+`ADMIN_PASSWORD`. Upload a short recording and watch the worker log.
+
+## 8. Later: domain and TLS
+
+Only when you want a proper hostname. Until then nginx is not involved at all.
 
 ```bash
 sudo cp meeting_minutes.nginx.conf /etc/nginx/sites-available/meeting_minutes
@@ -132,14 +153,9 @@ sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d mom.ambujaneotia.com
 ```
 
-## 8. Verify
-
-```bash
-curl -s localhost:8017/health         # {"status":"ok","asr_provider":"gemini",...}
-journalctl -u meeting_minutes_worker -f
-```
-
-Sign in at the domain, upload a short recording, and watch the worker log.
+Change `server_name` in the file first. Nothing in the app changes — nginx just
+proxies everything to 8017. Once that is working, close 8017 on the NSG so
+traffic only arrives over 443.
 
 ---
 
@@ -184,8 +200,10 @@ pg_dump -Fc meeting_minutes > meeting_minutes_$(date +%F).dump
 
 | Symptom | Cause |
 |---|---|
-| `413 Request Entity Too Large` on upload | `client_max_body_size` — nginx defaults to 1 MB |
-| Progress bar never moves, then jumps to done | SSE buffered; check `proxy_buffering off` in the `/api/meetings/` block |
+| Page loads but is blank / 404 at `/` | Frontend not built — check the startup log for "No frontend build at ..." |
+| Cannot reach the site at all | Port 8017 not open on the Network Security Group |
+| `413 Request Entity Too Large` on upload | Only once nginx is in front: `client_max_body_size` defaults to 1 MB |
+| Progress bar never moves, then jumps to done | Only behind nginx: SSE buffered; check `proxy_buffering off` |
 | Meeting stays "uploaded" forever | The worker is not running — `systemctl status meeting_minutes_worker` |
 | Service starts then exits immediately | Usually `.env` — systemd is stricter about quoting than a shell |
 | `permission denied` writing recordings | `LOCAL_STORAGE_DIR` does not exist or is not owned by `srvadmin` |
@@ -199,10 +217,14 @@ pg_dump -Fc meeting_minutes > meeting_minutes_$(date +%F).dump
 **Port 8017** is fixed in three places: both `.service` files (`--port`) and the
 nginx config (`proxy_pass`). Change all three together.
 
-**Binding.** The API listens on `0.0.0.0:8017`, matching the other apps. Only
-80/443 should be open on the Network Security Group, so nothing reaches 8017
-from outside — but if you want defence in depth, change `--host` to `127.0.0.1`
-in `meeting_minutes.service`. nginx connects over loopback either way.
+**Binding.** The API listens on `0.0.0.0:8017`, matching the other apps, which
+is what makes the IP deployment reachable. Once nginx and TLS are in front,
+close 8017 on the NSG and optionally change `--host` to `127.0.0.1` — nginx
+connects over loopback either way.
+
+**No TLS on the IP deployment.** Traffic is plain HTTP, including the login
+password. Fine for an internal trial on a trusted network; get a domain and
+certbot before real meetings go through it.
 
 **Docker** still works for local development (`docker compose up` at the repo
 root) and is unaffected by any of this.
