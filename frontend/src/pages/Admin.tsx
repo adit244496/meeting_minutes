@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { IconAlert, IconUpload } from "../components/icons";
 import { api, type FeatureToggle, type Role, type User } from "../lib/api";
 
 // Matches MIN_ENROLLMENT_SECONDS / RECOMMENDED_ENROLLMENT_SECONDS on the server.
@@ -8,12 +9,19 @@ const RECOMMENDED_SECONDS = 60;
 export default function Admin() {
   const [users, setUsers] = useState<User[]>([]);
   const [toggles, setToggles] = useState<FeatureToggle[]>([]);
-  const enrollmentOn = toggles.find((t) => t.key === "voice_enrollment_enabled")?.enabled ?? false;
-  const [form, setForm] = useState({ full_name: "", email: "", password: "", role: "member" as Role });
+  const [form, setForm] = useState({
+    full_name: "",
+    email: "",
+    password: "",
+    role: "member" as Role,
+  });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [enrolling, setEnrolling] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  const enrollmentOn =
+    toggles.find((t) => t.key === "voice_enrollment_enabled")?.enabled ?? false;
 
   async function refresh() {
     try {
@@ -77,148 +85,196 @@ export default function Admin() {
 
   return (
     <>
-      <h1>Users &amp; settings</h1>
-      <p className="sub">
-        {enrollmentOn
-          ? "Enroll a few voice samples per person before their first meeting so the system can put names to speakers automatically."
-          : "Transcripts label speakers as Speaker 1, 2, 3. Turn on voice enrollment below to put real names to them."}
-      </p>
-
-      <div className="panel">
-        <h3>Features</h3>
-        <div className="stack">
-          {toggles.map((t) => (
-            <label key={t.key} className="toggle-row">
-              <input
-                type="checkbox"
-                checked={t.enabled}
-                onChange={(e) => flip(t.key, e.target.checked)}
-              />
-              <span>
-                <strong>{t.label}</strong>
-                <span className="muted small" style={{ display: "block" }}>
-                  {t.description}
-                </span>
-              </span>
-            </label>
-          ))}
-          {toggles.length === 0 && <span className="muted small">No settings available.</span>}
-        </div>
-      </div>
-
-      <div className="panel">
-        <h3>Add a user</h3>
-        <form className="row" onSubmit={createUser}>
-          <input
-            className="grow"
-            placeholder="Full name"
-            value={form.full_name}
-            onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-            required
-          />
-          <input
-            className="grow"
-            type="email"
-            placeholder="Email"
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-            required
-          />
-          <input
-            type="password"
-            placeholder="Password (optional)"
-            value={form.password}
-            onChange={(e) => setForm({ ...form, password: e.target.value })}
-          />
-          <select
-            value={form.role}
-            onChange={(e) => setForm({ ...form, role: e.target.value as Role })}
-          >
-            <option value="member">Member</option>
-            <option value="admin">Admin</option>
-          </select>
-          <button className="primary" type="submit" disabled={busy}>
-            Add
-          </button>
-        </form>
-        <p className="small muted" style={{ margin: "10px 0 0" }}>
-          Leave the password blank for people who only need to be recognised in
-          transcripts and will not sign in.
+      <div className="page-head">
+        <h1>Users &amp; settings</h1>
+        <p className="lead">
+          {enrollmentOn
+            ? "Enroll a few voice samples per person before their first meeting so the system can put real names to speakers."
+            : "Transcripts label speakers as Speaker 1, 2, 3. Turn on voice enrollment below to put real names to them."}
         </p>
       </div>
 
-      {error && <p className="err small">{error}</p>}
+      {error && (
+        <div className="alert alert-err" style={{ marginBottom: 16 }}>
+          <IconAlert size={16} />
+          <span>{error}</span>
+        </div>
+      )}
 
-      <div className="panel" style={{ padding: 0 }}>
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Role</th>
-              {enrollmentOn && <th>Voice enrollment</th>}
-              {enrollmentOn && <th />}
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => {
-              const seconds = u.enrolled_seconds ?? 0;
-              const pct = Math.min(100, (seconds / RECOMMENDED_SECONDS) * 100);
-              return (
-                <tr key={u.id}>
-                  <td>
-                    <strong>{u.full_name}</strong>
-                  </td>
-                  <td className="muted small">{u.email}</td>
-                  <td>
-                    <span className="badge">{u.role}</span>
-                  </td>
-                  {enrollmentOn && (
-                    <td style={{ minWidth: 200 }}>
-                      <div className="progress" style={{ marginBottom: 4 }}>
-                        <div style={{ width: `${pct}%` }} />
-                      </div>
-                      <span className="muted small mono">
-                        {u.voiceprint_count ?? 0} sample(s) · {seconds.toFixed(0)}s of{" "}
-                        {RECOMMENDED_SECONDS}s
-                      </span>
+      <div className="card">
+        <div className="card-head">
+          <h3>Features</h3>
+        </div>
+        <div className="card-body">
+          <div className="stack" style={{ gap: 14 }}>
+            {toggles.map((t) => (
+              <label key={t.key} className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={t.enabled}
+                  onChange={(e) => flip(t.key, e.target.checked)}
+                />
+                <span>
+                  <span className="label">{t.label}</span>
+                  <span className="desc">{t.description}</span>
+                </span>
+              </label>
+            ))}
+            {toggles.length === 0 && <span className="dim small">No settings available.</span>}
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <h3>Add a user</h3>
+        </div>
+        <div className="card-body">
+          <form onSubmit={createUser}>
+            <div className="form-grid cols-2">
+              <label className="field">
+                <span>Full name</span>
+                <input
+                  type="text"
+                  placeholder="Priya Sharma"
+                  value={form.full_name}
+                  onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Email</span>
+                <input
+                  type="email"
+                  placeholder="priya@company.com"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Password (optional)</span>
+                <input
+                  type="password"
+                  placeholder="Leave blank if they will not sign in"
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Role</span>
+                <select
+                  value={form.role}
+                  onChange={(e) => setForm({ ...form, role: e.target.value as Role })}
+                >
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+            </div>
+            <div className="row" style={{ marginTop: 14 }}>
+              <button className="btn btn-primary" type="submit" disabled={busy}>
+                Add user
+              </button>
+              <span className="small dim">
+                Leave the password blank for people who only need to be recognised in
+                transcripts.
+              </span>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <h3>People</h3>
+          <span className="dim tiny">{users.length}</span>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                {enrollmentOn && <th>Voice enrollment</th>}
+                {enrollmentOn && <th />}
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u) => {
+                const seconds = u.enrolled_seconds ?? 0;
+                const pct = Math.min(100, (seconds / RECOMMENDED_SECONDS) * 100);
+                return (
+                  <tr key={u.id}>
+                    <td data-label="Name">
+                      <strong>{u.full_name}</strong>
                     </td>
-                  )}
-                  {enrollmentOn && (
-                    <td style={{ width: 150 }}>
-                      <button
-                        disabled={busy}
-                        onClick={() => {
-                          setEnrolling(u.id);
-                          fileInput.current?.click();
-                        }}
-                      >
-                        Add sample
-                      </button>
+                    <td data-label="Email" className="dim small">
+                      {u.email}
                     </td>
-                  )}
+                    <td data-label="Role">
+                      <span className="pill plain">{u.role}</span>
+                    </td>
+                    {enrollmentOn && (
+                      <td data-label="Enrollment" style={{ minWidth: 180 }}>
+                        <span style={{ display: "block", width: "100%" }}>
+                          <span className="bar" style={{ display: "block", marginBottom: 4 }}>
+                            <i style={{ width: `${pct}%` }} />
+                          </span>
+                          <span className="dim tiny mono">
+                            {u.voiceprint_count ?? 0} sample(s) · {seconds.toFixed(0)}s of{" "}
+                            {RECOMMENDED_SECONDS}s
+                          </span>
+                        </span>
+                      </td>
+                    )}
+                    {enrollmentOn && (
+                      <td data-label="">
+                        <button
+                          className="btn btn-sm"
+                          disabled={busy}
+                          onClick={() => {
+                            setEnrolling(u.id);
+                            fileInput.current?.click();
+                          }}
+                        >
+                          <IconUpload size={14} />
+                          Add sample
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+              {users.length === 0 && (
+                <tr>
+                  <td colSpan={5}>
+                    <div className="empty">
+                      <p className="big">No users yet</p>
+                    </div>
+                  </td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {enrollmentOn && (
+          <div className="card-foot">
+            Three samples of about 20 seconds each work better than one 60-second sample —
+            they capture more of the natural variation in how somebody speaks. Use clean
+            speech with no background chatter.
+          </div>
+        )}
       </div>
 
       <input
         ref={fileInput}
         type="file"
         accept="audio/*"
-        style={{ display: "none" }}
+        className="sr-only"
         onChange={(e) => e.target.files?.[0] && uploadSample(e.target.files[0])}
       />
-
-      {enrollmentOn && (
-        <p className="small muted">
-          Three samples of about 20 seconds each work better than one 60-second sample —
-          they capture more of the natural variation in how somebody speaks. Use clean
-          speech with no background chatter.
-        </p>
-      )}
     </>
   );
 }
