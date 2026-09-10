@@ -64,8 +64,13 @@ sudo -u postgres psql -d meeting_minutes -c 'CREATE EXTENSION IF NOT EXISTS vect
 sudo -u postgres psql -d meeting_minutes -c 'GRANT ALL ON SCHEMA public TO mm;'
 ```
 
-That last line matters on PostgreSQL 15+, where `public` is no longer writable
-by default — without it, table creation fails on first start.
+Both of the last two lines matter:
+
+- **`CREATE EXTENSION vector`** is per *database*. Having pgvector installed on
+  the server is not enough — without this, startup fails with
+  `type "vector" does not exist` partway through creating tables.
+- **`GRANT ALL ON SCHEMA public`** is needed on PostgreSQL 15+, where `public`
+  is no longer writable by default.
 
 ## 4. Configuration
 
@@ -227,6 +232,7 @@ pg_dump -Fc meeting_minutes > meeting_minutes_$(date +%F).dump
 | Service starts then exits immediately | Usually `.env` — systemd is stricter about quoting than a shell |
 | `permission denied` writing recordings | `LOCAL_STORAGE_DIR` does not exist or is not owned by `srvadmin` |
 | `CREATE TABLE` permission denied | Missing `GRANT ALL ON SCHEMA public` on PostgreSQL 15+ |
+| `type "vector" does not exist` | `CREATE EXTENSION vector` not run **in this database** — it is per database, not per server |
 | `ModuleNotFoundError: No module named 'psycopg2'` | `DATABASE_URL` scheme — needs `postgresql+psycopg://`. Now auto-corrected, so this means an old checkout |
 | `Temporary failure in name resolution` for `db` or `redis` | Docker container hostnames left in `.env`. Native uses `127.0.0.1` |
 | Meetings reach `transcribed` then fail | `ANTHROPIC_API_KEY` empty while `AUTO_GENERATE_MINUTES=true` |

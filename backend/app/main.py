@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app import storage
 from app.api import auth, meetings, minutes, settings as settings_api, users
@@ -20,12 +20,38 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger(__name__)
 
 
+def _require_pgvector() -> None:
+    """Fail with one readable line instead of a DDL traceback.
+
+    pgvector has to be enabled per database, not just installed on the server -
+    a distinction that otherwise surfaces as `type "vector" does not exist`
+    buried under sixty lines of SQLAlchemy stack, halfway through CREATE TABLE.
+    The app cannot create it itself: `vector` is not a trusted extension, so it
+    needs a superuser.
+    """
+    with engine.connect() as conn:
+        found = conn.execute(
+            text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+        ).scalar()
+
+    if not found:
+        db = engine.url.database
+        raise RuntimeError(
+            f"The pgvector extension is not enabled in the '{db}' database. "
+            "Enable it as a superuser:  "
+            f"sudo -u postgres psql -d {db} -c 'CREATE EXTENSION IF NOT EXISTS vector;'  "
+            "Installing the package on the server is not enough - the extension "
+            "is enabled per database."
+        )
+
+
 def bootstrap() -> None:
     """Create tables, the storage bucket, and the first admin.
 
     `create_all` is fine for a scaffold. Before production, switch to Alembic -
     see README "Before production".
     """
+    _require_pgvector()
     Base.metadata.create_all(bind=engine)
 
     try:
