@@ -4,8 +4,9 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
@@ -120,18 +121,36 @@ def health() -> dict:
 
 # Serve the built frontend, if it is there.
 #
-# Mounted last on purpose: FastAPI matches routes in the order they are added,
-# so every /api route and /health above take precedence over this catch-all.
-# With no build present (local development, where Vite serves the frontend on
-# its own port) this is skipped entirely.
-#
-# The frontend uses hash routing, so every client-side route is "/#/meetings"
-# and the server only ever sees "/". That is why no SPA rewrite rule is needed
-# here - an unknown path like /foo returns a plain 404, which is correct.
-# Switching the frontend to BrowserRouter would require adding that fallback.
+# Mounting StaticFiles at "/" looks simpler but is wrong: a mount full-matches
+# ANY path, including "/api/meetings/", which beats FastAPI's trailing-slash
+# redirect and returns a 404 from the static handler instead. Assets get their
+# own mount and everything else falls through to an explicit catch-all that
+# knows about /api.
 _dist = Path(settings.frontend_dist).resolve() if settings.frontend_dist else None
+
 if _dist and _dist.is_dir():
-    app.mount("/", StaticFiles(directory=str(_dist), html=True), name="frontend")
+    _index = _dist / "index.html"
+
+    if (_dist / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_dist / "assets")), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def serve_frontend(full_path: str):
+        # Registered after every router, so real API routes already won. Only
+        # unmatched paths reach here.
+        if full_path == "api" or full_path.startswith("api/"):
+            if full_path.endswith("/"):
+                # What FastAPI would have done unaided: send the client to the
+                # canonical path. 307 keeps the method and body intact.
+                return RedirectResponse("/" + full_path.rstrip("/"), status_code=307)
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "No such endpoint")
+
+        candidate = _dist / full_path
+        if full_path and candidate.is_file() and _dist in candidate.resolve().parents:
+            return FileResponse(candidate)
+
+        return FileResponse(_index)
+
     log.info("Serving frontend from %s", _dist)
 else:
     log.info("No frontend build at %s - API only", settings.frontend_dist)
