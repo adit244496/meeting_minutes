@@ -124,7 +124,21 @@ Produces `frontend/dist`. The API picks it up automatically at startup and
 serves it; if the directory is missing the API still runs, just without a UI.
 The startup log says which happened.
 
-## 6. Services
+## 6. Smoke test before starting anything
+
+Catches import-time errors - a bad route decorator, a missing dependency -
+without needing the database, Redis or an API key.
+
+```bash
+cd ~/meeting_minutes/meeting_minutes/backend
+venv/bin/python scripts/smoke_import.py
+```
+
+Prints the route table and both "OK" lines. Worth running after every `git pull`:
+uvicorn's master process survives a child that dies at import, so a broken build
+still looks "active (running)" in systemctl while every request 502s.
+
+## 7. Services
 
 ```bash
 cd ~/meeting_minutes/meeting_minutes
@@ -134,7 +148,7 @@ sudo systemctl enable --now meeting_minutes meeting_minutes_worker
 systemctl status meeting_minutes meeting_minutes_worker
 ```
 
-## 7. Open the port and verify
+## 8. Open the port and verify
 
 Add an inbound rule for TCP **8017** on the VM's Network Security Group.
 
@@ -147,7 +161,7 @@ journalctl -u meeting_minutes_worker -f
 Then open **http://&lt;server-ip&gt;:8017** and sign in with `ADMIN_EMAIL` /
 `ADMIN_PASSWORD`. Upload a short recording and watch the worker log.
 
-## 8. Later: domain and TLS
+## 9. Later: domain and TLS
 
 Only when you want a proper hostname. Until then nginx is not involved at all.
 
@@ -216,6 +230,7 @@ pg_dump -Fc meeting_minutes > meeting_minutes_$(date +%F).dump
 | `ModuleNotFoundError: No module named 'psycopg2'` | `DATABASE_URL` scheme — needs `postgresql+psycopg://`. Now auto-corrected, so this means an old checkout |
 | `Temporary failure in name resolution` for `db` or `redis` | Docker container hostnames left in `.env`. Native uses `127.0.0.1` |
 | Meetings reach `transcribed` then fail | `ANTHROPIC_API_KEY` empty while `AUTO_GENERATE_MINUTES=true` |
+| 502 from nginx, but `systemctl` says running | uvicorn's master survives children that crash at import. Run `scripts/smoke_import.py` for the real error |
 
 ---
 
