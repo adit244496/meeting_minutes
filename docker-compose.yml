@@ -33,6 +33,12 @@ services:
         # true adds torch + speechbrain (~2GB) for speaker identification
         WITH_SPEAKER_ID: "false"
     env_file: .env
+    environment:
+      # Container hostnames, overriding the localhost defaults in .env that the
+      # native install needs. `environment` takes precedence over `env_file`.
+      DATABASE_URL: postgresql+psycopg://mm:mm@db:5432/meeting_minutes
+      REDIS_URL: redis://redis:6379/0
+      LOCAL_STORAGE_DIR: /data/recordings
     depends_on:
       db:
         condition: service_healthy
@@ -53,6 +59,12 @@ services:
       args:
         WITH_SPEAKER_ID: "false"
     env_file: .env
+    environment:
+      # Container hostnames, overriding the localhost defaults in .env that the
+      # native install needs. `environment` takes precedence over `env_file`.
+      DATABASE_URL: postgresql+psycopg://mm:mm@db:5432/meeting_minutes
+      REDIS_URL: redis://redis:6379/0
+      LOCAL_STORAGE_DIR: /data/recordings
     depends_on:
       db:
         condition: service_healthy

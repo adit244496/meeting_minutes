@@ -95,6 +95,11 @@ REDIS_URL=redis://127.0.0.1:6379/0
 LOCAL_STORAGE_DIR=/home/srvadmin/meeting_minutes/recordings
 ```
 
+`.env.example` already defaults these to `127.0.0.1`, which is what a native
+install needs; docker-compose overrides them with its own container hostnames.
+If you ever see `Temporary failure in name resolution` for a host called `db` or
+`redis`, a Docker-flavoured value has been copied into a native `.env`.
+
 ```bash
 mkdir -p /home/srvadmin/meeting_minutes/recordings
 ```
@@ -209,6 +214,7 @@ pg_dump -Fc meeting_minutes > meeting_minutes_$(date +%F).dump
 | `permission denied` writing recordings | `LOCAL_STORAGE_DIR` does not exist or is not owned by `srvadmin` |
 | `CREATE TABLE` permission denied | Missing `GRANT ALL ON SCHEMA public` on PostgreSQL 15+ |
 | `ModuleNotFoundError: No module named 'psycopg2'` | `DATABASE_URL` scheme — needs `postgresql+psycopg://`. Now auto-corrected, so this means an old checkout |
+| `Temporary failure in name resolution` for `db` or `redis` | Docker container hostnames left in `.env`. Native uses `127.0.0.1` |
 | Meetings reach `transcribed` then fail | `ANTHROPIC_API_KEY` empty while `AUTO_GENERATE_MINUTES=true` |
 
 ---
