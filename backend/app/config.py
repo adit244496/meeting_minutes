@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -52,6 +53,22 @@ class Settings(BaseSettings):
 
     speaker_match_threshold: float = 0.35
     speaker_embed_seconds: int = 30
+
+
+    @field_validator("database_url")
+    @classmethod
+    def _require_psycopg3(cls, value: str) -> str:
+        """Force the psycopg 3 driver.
+
+        A bare `postgresql://` makes SQLAlchemy reach for psycopg2, which is not
+        installed - and the failure is an opaque `ModuleNotFoundError: No module
+        named 'psycopg2'` rather than anything about the URL. Everyone writes the
+        bare form from memory, so rewrite it instead of failing.
+        """
+        for prefix in ("postgresql://", "postgres://"):
+            if value.startswith(prefix):
+                return "postgresql+psycopg://" + value[len(prefix):]
+        return value
 
 
 @lru_cache

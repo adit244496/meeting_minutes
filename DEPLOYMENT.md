@@ -208,6 +208,7 @@ pg_dump -Fc meeting_minutes > meeting_minutes_$(date +%F).dump
 | Service starts then exits immediately | Usually `.env` — systemd is stricter about quoting than a shell |
 | `permission denied` writing recordings | `LOCAL_STORAGE_DIR` does not exist or is not owned by `srvadmin` |
 | `CREATE TABLE` permission denied | Missing `GRANT ALL ON SCHEMA public` on PostgreSQL 15+ |
+| `ModuleNotFoundError: No module named 'psycopg2'` | `DATABASE_URL` scheme — needs `postgresql+psycopg://`. Now auto-corrected, so this means an old checkout |
 | Meetings reach `transcribed` then fail | `ANTHROPIC_API_KEY` empty while `AUTO_GENERATE_MINUTES=true` |
 
 ---
