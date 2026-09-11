@@ -18,8 +18,16 @@ For the real benchmark, read RECORDING_SCRIPT.md aloud on your own microphone.
 
 Usage
 -----
+    # native (needs: sudo apt install -y espeak-ng ffmpeg)
+    cd ~/meeting_minutes/meeting_minutes
+    backend/venv/bin/python samples/generate_test_audio.py
+    cd backend && venv/bin/python scripts/spike.py ../samples/synthetic_mixed.wav
+
+    # docker
     docker compose run --rm api python /samples/generate_test_audio.py
     docker compose run --rm api python scripts/spike.py /samples/synthetic_mixed.wav
+
+The file it writes sits next to this script, whichever way you run it.
 """
 
 from __future__ import annotations
@@ -30,7 +38,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-OUT = Path("/samples/synthetic_mixed.wav")
+OUT = Path(__file__).resolve().parent / 'synthetic_mixed.wav'
 
 # (espeak voice, pitch, speed, text) - pitch and speed vary per speaker so the
 # diarizer has something to separate. Same content as RECORDING_SCRIPT.md.
@@ -57,8 +65,9 @@ def require(binary: str) -> str:
     path = shutil.which(binary)
     if not path:
         sys.exit(
-            f"{binary} not found. Rebuild the backend image (`docker compose build api`) "
-            "- it is installed there, not on your host."
+            f"{binary} not found.\n"
+            "  native:  sudo apt install -y espeak-ng ffmpeg\n"
+            "  docker:  docker compose build api   (both ship in the image)"
         )
     return path
 

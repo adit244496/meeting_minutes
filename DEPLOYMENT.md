@@ -183,6 +183,44 @@ traffic only arrives over 443.
 
 ---
 
+## Testing it
+
+### A throwaway test recording
+
+No Hindi or Bengali speakers to hand? Generate a synthetic one:
+
+```bash
+sudo apt install -y espeak-ng
+cd ~/meeting_minutes/meeting_minutes
+backend/venv/bin/python samples/generate_test_audio.py
+```
+
+Writes `samples/synthetic_mixed.wav` — three robotic voices covering the same
+English / Hindi / Bengali script, with the English technical terms left in Latin
+so you can see whether a provider transliterates them.
+
+**This proves the pipeline runs. It is not a quality benchmark.** espeak-ng has
+no room acoustics, no accents and no natural code-switching prosody, so a
+provider can ace this and still struggle on your meetings. For the real
+measurement read `samples/RECORDING_SCRIPT.md` aloud with two colleagues on the
+microphone you will actually use.
+
+### Run it through the pipeline
+
+```bash
+cd ~/meeting_minutes/meeting_minutes/backend
+venv/bin/python scripts/spike.py ../samples/synthetic_mixed.wav
+```
+
+No database, queue or UI involved — the fastest way to see a provider error as a
+clean traceback. Prints the transcript, the speaker split and a code-switching
+report.
+
+Then upload the same file through the web UI and watch
+`journalctl -u meeting_minutes_worker -f` to exercise the full path.
+
+---
+
 ## Operating it
 
 **Deploy a change**
@@ -237,6 +275,8 @@ pg_dump -Fc meeting_minutes > meeting_minutes_$(date +%F).dump
 | `Temporary failure in name resolution` for `db` or `redis` | Docker container hostnames left in `.env`. Native uses `127.0.0.1` |
 | Meetings reach `transcribed` then fail | `ANTHROPIC_API_KEY` empty while `AUTO_GENERATE_MINUTES=true` |
 | 502 from nginx, but `systemctl` says running | uvicorn's master survives children that crash at import. Run `scripts/smoke_import.py` for the real error |
+| `ERR_TOO_MANY_REDIRECTS` on an API call | An nginx `location` ending in `/` does not match the bare path and 301s to add the slash, while the app 307s to strip it. Use one `location /api/` |
+| Record button disabled, "needs a secure connection" | Browsers only expose the microphone over HTTPS. Upload files until certbot has run |
 
 ---
 
