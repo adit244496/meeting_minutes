@@ -46,12 +46,33 @@ def _require_pgvector() -> None:
         )
 
 
+def _check_ffmpeg() -> None:
+    """Warn loudly at startup if ffmpeg is missing.
+
+    Every meeting is transcoded before anything else happens, so without ffmpeg
+    nothing can process - but the failure otherwise surfaces only when somebody
+    uploads their first recording, as a job that fails deep in the worker. A
+    warning here puts it in the startup log instead. Not fatal: the UI and the
+    existing transcripts stay usable.
+    """
+    import shutil
+
+    if shutil.which("ffmpeg") and shutil.which("ffprobe"):
+        return
+    log.warning(
+        "ffmpeg/ffprobe not found on PATH. Every meeting is transcoded before "
+        "transcription, so uploads will fail until it is installed:  "
+        "sudo apt install -y ffmpeg"
+    )
+
+
 def bootstrap() -> None:
     """Create tables, the storage bucket, and the first admin.
 
     `create_all` is fine for a scaffold. Before production, switch to Alembic -
     see README "Before production".
     """
+    _check_ffmpeg()
     _require_pgvector()
     Base.metadata.create_all(bind=engine)
 

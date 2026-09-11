@@ -31,7 +31,7 @@ sudo apt install -y python3-venv ffmpeg redis-server
 sudo systemctl enable --now redis-server
 ```
 
-`ffmpeg` runs on every meeting. Python 3.10+ is required — SQLAlchemy resolves
+**`ffmpeg` is not optional** — every meeting is transcoded before transcription, so uploads fail without it. The API logs a warning at startup if it is missing. Python 3.10+ is required — SQLAlchemy resolves
 `Mapped[str | None]` at runtime, so 3.9 fails at import.
 
 ## 2. Checkout and virtualenv
@@ -268,6 +268,7 @@ pg_dump -Fc meeting_minutes > meeting_minutes_$(date +%F).dump
 | Progress bar never moves, then jumps to done | Only behind nginx: SSE buffered; check `proxy_buffering off` |
 | Meeting stays "uploaded" forever | The worker is not running — `systemctl status meeting_minutes_worker` |
 | Service starts then exits immediately | Usually `.env` — systemd is stricter about quoting than a shell |
+| Uploads fail, worker logs `ffmpeg not found on PATH` | `sudo apt install -y ffmpeg` |
 | `permission denied` writing recordings | `LOCAL_STORAGE_DIR` does not exist or is not owned by `srvadmin` |
 | `CREATE TABLE` permission denied | Missing `GRANT ALL ON SCHEMA public` on PostgreSQL 15+ |
 | `type "vector" does not exist` | `CREATE EXTENSION vector` not run **in this database** — it is per database, not per server |
