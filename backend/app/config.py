@@ -12,6 +12,15 @@ class Settings(BaseSettings):
     # working directory. Empty string disables it.
     frontend_dist: str = "../frontend/dist"
 
+    # Browser origins allowed to call the API cross-origin, comma-separated.
+    # Only matters in local development, where Vite serves the frontend on its
+    # own port. In production the API serves the frontend itself (same origin),
+    # so CORS never comes into play.
+    cors_origins: str = (
+        "http://localhost:5017,http://127.0.0.1:5017,"
+        "http://localhost:5173,http://127.0.0.1:5173"
+    )
+
     secret_key: str = "dev-secret-change-me"
     admin_email: str = "admin@example.com"
     admin_password: str = "changeme123"
@@ -41,6 +50,11 @@ class Settings(BaseSettings):
     sarvam_api_key: str = ""
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.8-flash"
+    # Comma-separated, tried in order when the primary model is overloaded (503),
+    # rate-limited (429) or not served (404). The newest Flash models hit "high
+    # demand" spikes for minutes at a time, and a model can appear in
+    # models.list() yet still 404 on generate. Empty string disables fallback.
+    gemini_fallback_models: str = "gemini-3.6-flash,gemini-3.5-flash"
 
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-opus-5"

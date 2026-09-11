@@ -144,10 +144,32 @@ def main() -> int:
                 f"{r.speaking_seconds:>7.1f}s ({share:4.1f}%)  {match}"
             )
 
+        # --- Code-switching report -------------------------------------------
+        # Every published WER number is measured on monolingual audio. This is
+        # the part that decides your provider, so measure it directly.
+        from app.lang import analyse, summarise
+
+        stats = summarise([s.text for s in result.segments])
+        print("\n--- Code-switching " + "-" * 49)
+        print(
+            f"  {stats['mixed_segments']} of {stats['segments']} segments mix scripts "
+            f"({stats['mixed_share']:.0%})"
+        )
+        for script, share in stats["scripts"].items():
+            print(f"  {script:<6} {share:6.1%} of all letters")
+
+        mixed = [s for s in result.segments if analyse(s.text).is_mixed]
+        if mixed:
+            print("\n  Sample mixed segments - check whether English technical terms")
+            print("  stayed in Latin script or got transliterated:")
+            for seg in mixed[:5]:
+                print(f"    [{analyse(seg.text).label}] {seg.text[:110]}")
+
         print("\n--- Transcript " + "-" * 53)
         for seg in result.segments:
             speaker = names.get(seg.speaker, seg.speaker)
-            lang = f" [{seg.language}]" if seg.language else ""
+            tag = analyse(seg.text).label or seg.language or ""
+            lang = f" [{tag}]" if tag else ""
             print(f"[{timestamp(seg.start)}] {speaker}{lang}: {seg.text}")
 
         payload = {

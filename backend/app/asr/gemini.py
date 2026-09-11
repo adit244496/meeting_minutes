@@ -100,26 +100,33 @@ class GeminiProvider:
         # Files API rather than inline data: inline caps at 20 MB total and an
         # hour of audio blows past that even compressed.
         flac = to_flac(audio_path, audio_path.with_suffix(".flac"))
-        uploaded = client.files.upload(file=str(flac))
+        # The mime type must be explicit. The SDK guesses it from the extension
+        # via Python's mimetypes table, and slim container images have no entry
+        # for .flac - the upload fails with "Unknown mime type" otherwise.
+        uploaded = client.files.upload(file=str(flac), config={"mime_type": "audio/flac"})
 
         try:
-            interaction = client.interactions.create(
-                model=self.model,
-                input=[
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "audio",
-                        "uri": uploaded.uri,
-                        "mime_type": uploaded.mime_type,
-                    },
-                ],
-                response_format={
-                    "type": "text",
-                    "mime_type": "application/json",
-                    "schema": _Transcript.model_json_schema(),
-                },
-            )
-            parsed = _Transcript.model_validate_json(interaction.output_text)
+            uploaded = _wait_until_active(client, uploaded)
+
+            # models.generate_content rather than the newer interactions API:
+            # interactions is marked experimental in google-genai 2.x and warns
+            # on every call. This is the long-standing documented path for
+            # "file + prompt in, schema-constrained JSON out".
+            response, served_by = self._generate(client, uploaded, prompt)
+            _raise_if_truncated(response)
+            parsed = response.parsed
+            if not isinstance(parsed, _Transcript):
+                text = (response.text or "").strip()
+                if not text:
+                    # An empty response is not a schema problem - validating "{}"
+                    # would report "segments: field required" and hide the real
+                    # cause. Say what the API actually returned instead.
+                    raise RuntimeError(
+                        "Gemini returned no transcript text. " + _describe_empty(response)
+                    )
+                # Text came back but did not match the schema; validating it
+                # makes the error name the offending field.
+                parsed = _Transcript.model_validate_json(text)
         finally:
             # Uploaded meeting audio should not linger on a third party longer
             # than the request needs it.
@@ -129,17 +136,20 @@ class GeminiProvider:
                 log.warning("Could not delete uploaded file %s", uploaded.name)
             flac.unlink(missing_ok=True)
 
-        segments = [
-            TranscriptSegment(
-                start=float(s.start_seconds),
-                end=float(s.end_seconds),
-                speaker=_normalise_speaker(s.speaker),
-                text=s.text.strip(),
-                language=s.language or parsed.primary_language,
+        segments = []
+        for s in parsed.segments:
+            if not (s.text and s.text.strip()):
+                continue
+            start, end = _clamp_span(s.start_seconds, s.end_seconds, total_seconds)
+            segments.append(
+                TranscriptSegment(
+                    start=start,
+                    end=end,
+                    speaker=_normalise_speaker(s.speaker),
+                    text=s.text.strip(),
+                    language=s.language or parsed.primary_language,
+                )
             )
-            for s in parsed.segments
-            if s.text and s.text.strip()
-        ]
         # An LLM can emit segments out of order; everything downstream assumes
         # chronological.
         segments.sort(key=lambda s: s.start)
@@ -151,8 +161,142 @@ class GeminiProvider:
             segments=segments,
             language=parsed.primary_language,
             words=[],
-            raw={"model": self.model, "segment_count": len(segments)},
+            raw={"model": served_by, "segment_count": len(segments)},
         )
+
+    def _generate(self, client, uploaded, prompt: str):
+        """Run the transcription call, falling back when the model is busy.
+
+        The SDK already retries transient failures a few times. What it will not
+        do is switch model - and the newest Flash models regularly return
+        "503 This model is currently experiencing high demand" for minutes at a
+        time. Rather than fail the whole meeting, try the fallback model.
+        Anything other than overload or rate limiting (bad request, auth,
+        quota) is raised immediately, since another model will not fix it.
+        """
+        from google.genai import errors, types
+
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=_Transcript,
+            # The transcript is model output, so it needs the full output
+            # budget - Bengali and Hindi tokenize heavily.
+            max_output_tokens=65536,
+            temperature=0,
+        )
+        models = [self.model]
+        for name in settings.gemini_fallback_models.split(","):
+            name = name.strip()
+            if name and name not in models:
+                models.append(name)
+
+        tried: list[str] = []
+        last_error: Exception | None = None
+        for position, model in enumerate(models):
+            try:
+                response = client.models.generate_content(
+                    model=model, contents=[uploaded, prompt], config=config
+                )
+            except errors.APIError as exc:
+                is_last = position == len(models) - 1
+                # 404 counts too: a model can be listed yet not served, and on
+                # the primary it means a stale GEMINI_MODEL - worth a loud
+                # warning, not a failed meeting.
+                if exc.code in (404, 429, 500, 503) and not is_last:
+                    log.warning(
+                        "Gemini model %s returned %s; trying %s",
+                        model, exc.code, models[position + 1],
+                    )
+                    tried.append(f"{model}={exc.code}")
+                    last_error = exc
+                    continue
+                tried.append(f"{model}={exc.code}")
+                raise RuntimeError(
+                    f"Gemini transcription failed on every model tried ({', '.join(tried)}). "
+                    f"Last error: {getattr(exc, 'message', exc)}"
+                ) from exc
+            if model != self.model:
+                log.info("Transcribed with fallback model %s", model)
+            return response, model
+
+        raise RuntimeError(f"All Gemini models failed: {last_error}")
+
+
+def _wait_until_active(client, uploaded, timeout_seconds: float = 180.0):
+    """Block until the uploaded file has finished server-side processing.
+
+    Using a file while it is still PROCESSING fails the generate call. Audio is
+    usually ready within seconds, but a long recording can take a while.
+    """
+    import time
+
+    deadline = time.monotonic() + timeout_seconds
+    current = uploaded
+    while True:
+        state = str(getattr(current, "state", "") or "").upper()
+        if "ACTIVE" in state or not state:
+            return current
+        if "FAILED" in state:
+            raise RuntimeError(f"Gemini could not process the uploaded audio ({current.name})")
+        if time.monotonic() > deadline:
+            raise RuntimeError(
+                f"Gemini was still processing the uploaded audio after {timeout_seconds:.0f}s"
+            )
+        time.sleep(2)
+        current = client.files.get(name=current.name)
+
+
+def _describe_empty(response) -> str:
+    """Summarise why a response carried no text, for an actionable error."""
+    details = []
+    feedback = getattr(response, "prompt_feedback", None)
+    block = getattr(feedback, "block_reason", None) if feedback else None
+    if block:
+        details.append(f"prompt blocked: {block}")
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        details.append("no candidates returned")
+    for candidate in candidates:
+        reason = getattr(candidate, "finish_reason", None)
+        message = getattr(candidate, "finish_message", None)
+        details.append(f"finish_reason={reason}" + (f" ({message})" if message else ""))
+    usage = getattr(response, "usage_metadata", None)
+    if usage is not None:
+        details.append(
+            f"output tokens={getattr(usage, 'candidates_token_count', None)}, "
+            f"thinking tokens={getattr(usage, 'thoughts_token_count', None)}"
+        )
+    return "; ".join(details) or "no further detail in the response"
+
+
+def _raise_if_truncated(response) -> None:
+    """Fail on an output-token cut-off before trying to parse half a JSON document."""
+    for candidate in getattr(response, "candidates", None) or []:
+        reason = str(getattr(candidate, "finish_reason", "") or "").upper()
+        if "MAX_TOKENS" in reason:
+            raise RuntimeError(
+                "Gemini hit its output token limit before finishing the transcript. "
+                "Bengali and Hindi tokenize ~3x more heavily than English, so long "
+                "meetings in those languages are the likeliest to hit this. Split the "
+                "recording or use a dedicated ASR provider for meetings this long."
+            )
+
+
+def _clamp_span(start: float, end: float, total_seconds: float) -> tuple[float, float]:
+    """Force a model-generated span inside the real audio.
+
+    Gemini's timestamps come from the language model, not forced alignment, and
+    they drift - on a 66-second test clip it stamped the final turn at 1:42.
+    Unclamped, that inflates per-speaker speaking time (shares summed to 158%)
+    and would make speaker identification cut audio from past the end of the
+    file. Clamp to [0, duration] and keep end >= start.
+    """
+    start = max(0.0, float(start or 0.0))
+    end = max(0.0, float(end or 0.0))
+    if total_seconds > 0:
+        start = min(start, total_seconds)
+        end = min(end, total_seconds)
+    return start, max(start, end)
 
 
 def _normalise_speaker(label: str) -> str:

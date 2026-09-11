@@ -14,7 +14,9 @@ initTheme();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <HashRouter>
+    {/* Opt in to the v7 behaviours now; silences the upgrade warnings and
+        nothing here depends on the old semantics. */}
+    <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/" element={<App />}>
