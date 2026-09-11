@@ -37,10 +37,14 @@ cp .env.example .env
 docker compose up --build
 ```
 
+Ports are 5017 and 8017 rather than the usual 5173/8000, so this does not
+collide with other projects already using the defaults. Postgres and Redis are
+not published to the host at all.
+
 | Service | URL |
 |---|---|
-| App | http://localhost:5173 |
-| API docs | http://localhost:8000/docs |
+| App | **http://localhost:5017** |
+| API docs | http://localhost:8017/docs |
 
 Sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD` from your `.env`.
 

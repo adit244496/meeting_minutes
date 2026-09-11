@@ -8,8 +8,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    ports:
-      - "5432:5432"
+    # No host port: only the api and worker containers need it.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mm -d meeting_minutes"]
       interval: 5s
@@ -18,8 +17,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    # No host port: only the api and worker containers need it.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -54,7 +52,7 @@ services:
       - ./data:/data
       - modelcache:/models
     ports:
-      - "8000:8000"
+      - "8017:8000"
     # --reload-dir limits the watcher to our own package. Without it uvicorn
     # watches the whole working directory.
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app
@@ -98,9 +96,9 @@ services:
       # Vite fails to start.
       - /app/node_modules
     ports:
-      - "5173:5173"
+      - "5017:5173"
     environment:
-      VITE_API_URL: http://localhost:8000
+      VITE_API_URL: http://localhost:8017
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
 
 volumes:
