@@ -114,6 +114,16 @@ def generate_minutes(
     if not segments:
         raise ValueError("cannot generate minutes from an empty transcript")
 
+    if not settings.anthropic_api_key:
+        # Say this plainly rather than letting the SDK raise an auth error from
+        # deep inside a worker task. Transcription uses Gemini, so a meeting can
+        # transcribe perfectly and only fail at this step.
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not set, so minutes cannot be generated. "
+            "Add it to .env, or set AUTO_GENERATE_MINUTES=false to keep "
+            "transcripts only."
+        )
+
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key or None)
 
     prompt = (

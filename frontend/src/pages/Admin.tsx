@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
 import { IconAlert, IconUpload } from "../components/icons";
-import { api, type FeatureToggle, type Role, type User } from "../lib/api";
+import {
+  api,
+  type FeatureToggle,
+  type RetentionSetting,
+  type Role,
+  type User,
+} from "../lib/api";
 
 // Matches MIN_ENROLLMENT_SECONDS / RECOMMENDED_ENROLLMENT_SECONDS on the server.
 const RECOMMENDED_SECONDS = 60;
@@ -18,6 +24,7 @@ export default function Admin() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [enrolling, setEnrolling] = useState<string | null>(null);
+  const [retention, setRetention] = useState<RetentionSetting[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const enrollmentOn =
@@ -34,7 +41,19 @@ export default function Admin() {
   useEffect(() => {
     refresh();
     api.listToggles().then(setToggles).catch(() => undefined);
+    api.listRetention().then(setRetention).catch(() => undefined);
   }, []);
+
+  async function saveRetention(key: string, value: number) {
+    const previous = retention;
+    setRetention((prev) => prev.map((r) => (r.key === key ? { ...r, value } : r)));
+    try {
+      await api.setRetention(key, value);
+    } catch (err) {
+      setRetention(previous);
+      setError(err instanceof Error ? err.message : "Could not save retention setting");
+    }
+  }
 
   async function flip(key: string, enabled: boolean) {
     setToggles((prev) => prev.map((t) => (t.key === key ? { ...t, enabled } : t)));
@@ -122,6 +141,51 @@ export default function Admin() {
             ))}
             {toggles.length === 0 && <span className="dim small">No settings available.</span>}
           </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <h3>Data retention</h3>
+          <span className="dim tiny">0 = keep forever</span>
+        </div>
+        <div className="card-body">
+          <div className="stack" style={{ gap: 16 }}>
+            {retention.map((r) => (
+              <div key={r.key} className="retention-row">
+                <span>
+                  <span className="label">{r.label}</span>
+                  <span className="desc">{r.description}</span>
+                </span>
+                <span className="row" style={{ gap: 8, flexWrap: "nowrap" }}>
+                  <input
+                    type="number"
+                    min={r.minimum}
+                    max={r.maximum}
+                    value={r.value}
+                    onChange={(e) =>
+                      setRetention((prev) =>
+                        prev.map((x) =>
+                          x.key === r.key ? { ...x, value: Number(e.target.value) } : x,
+                        ),
+                      )
+                    }
+                    onBlur={(e) => saveRetention(r.key, Number(e.target.value))}
+                    style={{ width: 96 }}
+                  />
+                  <span className="dim small">{r.value === 0 ? "forever" : r.unit}</span>
+                </span>
+              </div>
+            ))}
+            {retention.length === 0 && (
+              <span className="dim small">No retention settings available.</span>
+            )}
+          </div>
+        </div>
+        <div className="card-foot">
+          The retention job runs daily at 03:30. Each tier is independent: deleting
+          recordings keeps their transcripts, and deleting transcripts keeps the minutes.
+          Meetings themselves are never deleted — the page says what was removed and when.
         </div>
       </div>
 

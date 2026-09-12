@@ -1,18 +1,50 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { IconAlert, IconChevronLeft, IconRefresh, IconSparkle } from "../components/icons";
+import {
+  IconAlert,
+  IconCheck,
+  IconChevronLeft,
+  IconDownload,
+  IconEdit,
+  IconHistory,
+  IconRefresh,
+  IconSparkle,
+} from "../components/icons";
 import {
   API_BASE,
   api,
   formatDuration,
   formatTimestamp,
   type MeetingDetail as Detail,
+  type Minutes,
+  type MinutesVersion,
   type Progress,
   type User,
 } from "../lib/api";
 
 const ACTIVE = new Set(["created", "uploaded", "processing"]);
+
+/** The list sections are edited as plain lines, with " | " between fields.
+ *  A rich editor would be nicer, but this keeps every field reachable with a
+ *  keyboard and round-trips exactly to the JSON the API expects. */
+const SEPARATOR = " | ";
+
+function linesOf(values: string[]): string {
+  return values.join("\n");
+}
+
+function toLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function splitFields(line: string, count: number): string[] {
+  const parts = line.split("|").map((p) => p.trim());
+  return Array.from({ length: count }, (_, i) => parts[i] ?? "");
+}
 
 export default function MeetingDetail() {
   const { id = "" } = useParams();
@@ -27,6 +59,17 @@ export default function MeetingDetail() {
   const [canRelabel, setCanRelabel] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({
+    summary: "",
+    decisions: "",
+    action_items: "",
+    topics: "",
+    open_questions: "",
+  });
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<MinutesVersion[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -105,10 +148,102 @@ export default function MeetingDetail() {
     try {
       await api.regenerateMinutes(id, language);
       await load();
+      if (showHistory) await refreshHistory();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not generate minutes");
     } finally {
       setBusy(false);
+    }
+  }
+
+  const refreshHistory = useCallback(async () => {
+    try {
+      setHistory(await api.listMinutesVersions(id));
+    } catch {
+      // A meeting with no minutes has no history; not worth an error banner.
+    }
+  }, [id]);
+
+  function startEditing(minutes: Minutes) {
+    setDraft({
+      summary: minutes.summary,
+      decisions: linesOf(
+        minutes.decisions.map((d) =>
+          [d.decision, d.decided_by ?? "", d.rationale ?? ""]
+            .join(SEPARATOR)
+            .replace(/(\s*\|\s*)+$/, ""),
+        ),
+      ),
+      action_items: linesOf(
+        minutes.action_items.map((a) =>
+          [a.task, a.owner, a.due ?? ""].join(SEPARATOR).replace(/(\s*\|\s*)+$/, ""),
+        ),
+      ),
+      topics: linesOf(minutes.topics.map((t) => [t.title, t.discussion].join(SEPARATOR))),
+      open_questions: linesOf(minutes.open_questions),
+    });
+    setEditing(true);
+  }
+
+  async function saveEdits() {
+    setBusy(true);
+    setError("");
+    try {
+      await api.updateMinutes(id, {
+        summary: draft.summary.trim(),
+        decisions: toLines(draft.decisions).map((line) => {
+          const [decision, decided_by, rationale] = splitFields(line, 3);
+          return { decision, decided_by: decided_by || null, rationale: rationale || null };
+        }),
+        action_items: toLines(draft.action_items).map((line) => {
+          const [task, owner, due] = splitFields(line, 3);
+          return { task, owner: owner || "Unassigned", due: due || null, priority: "medium" };
+        }),
+        topics: toLines(draft.topics).map((line) => {
+          const [title, discussion] = splitFields(line, 2);
+          return { title, discussion, speakers: [] };
+        }),
+        open_questions: toLines(draft.open_questions),
+      });
+      setEditing(false);
+      await load();
+      if (showHistory) await refreshHistory();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save minutes");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restore(version: number) {
+    setBusy(true);
+    try {
+      await api.restoreMinutesVersion(id, version);
+      await load();
+      await refreshHistory();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not restore that version");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleHistory() {
+    const next = !showHistory;
+    setShowHistory(next);
+    if (next) await refreshHistory();
+  }
+
+  async function download(kind: "audio" | "transcript" | "minutes", fmt?: string) {
+    setError("");
+    try {
+      const query = fmt ? `?fmt=${fmt}` : "";
+      await api.download(
+        `/api/meetings/${id}/download/${kind}${query}`,
+        `${kind}.${fmt ?? "bin"}`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Could not download the ${kind}`);
     }
   }
 
@@ -208,10 +343,51 @@ export default function MeetingDetail() {
         </div>
       )}
 
+      {/* Downloads. Each tier has its own retention window, so anything that
+          will eventually be deleted can be taken away first. */}
+      <div className="card">
+        <div className="card-head">
+          <h3>Download</h3>
+        </div>
+        <div className="card-body">
+          <div className="btn-group">
+            <button
+              className="btn btn-sm"
+              onClick={() => download("audio")}
+              disabled={Boolean(meeting.audio_deleted_at)}
+              title={meeting.audio_deleted_at ? "The recording was deleted" : undefined}
+            >
+              <IconDownload size={14} />
+              Recording
+            </button>
+            <button className="btn btn-sm" onClick={() => download("transcript", "txt")}>
+              <IconDownload size={14} />
+              Transcript (text)
+            </button>
+            <button className="btn btn-sm" onClick={() => download("transcript", "srt")}>
+              <IconDownload size={14} />
+              Subtitles
+            </button>
+            <button className="btn btn-sm" onClick={() => download("transcript", "json")}>
+              <IconDownload size={14} />
+              Transcript (JSON)
+            </button>
+            <button className="btn btn-sm" onClick={() => download("minutes", "md")}>
+              <IconDownload size={14} />
+              Minutes (Markdown)
+            </button>
+            <button className="btn btn-sm" onClick={() => download("minutes", "json")}>
+              <IconDownload size={14} />
+              Minutes (JSON)
+            </button>
+          </div>
+        </div>
+      </div>
+
       {meeting.audio_deleted_at ? (
         <p className="small dim" style={{ marginBottom: 16 }}>
           Recording deleted on {new Date(meeting.audio_deleted_at).toLocaleDateString()} under
-          the retention policy. The transcript and minutes below are kept permanently.
+          the retention policy. The transcript and minutes below are kept.
         </p>
       ) : (
         audioSrc && (
@@ -335,8 +511,16 @@ export default function MeetingDetail() {
             })
           ) : (
             <div className="empty">
-              <p className="big">No transcript yet</p>
-              <p className="small">It appears here once processing finishes.</p>
+              <p className="big">
+                {meeting.transcript_deleted_at ? "Transcript deleted" : "No transcript yet"}
+              </p>
+              <p className="small">
+                {meeting.transcript_deleted_at
+                  ? `Removed on ${new Date(
+                      meeting.transcript_deleted_at,
+                    ).toLocaleDateString()} under the retention policy. The minutes are kept.`
+                  : "It appears here once processing finishes."}
+              </p>
             </div>
           )}
         </div>
@@ -347,14 +531,155 @@ export default function MeetingDetail() {
           <>
             <div className="card">
               <div className="card-head">
-                <h3>Summary</h3>
+                <h3>
+                  Minutes · version {minutes.version}
+                  {minutes.source !== "generated" && ` (${minutes.source})`}
+                </h3>
+                <div className="btn-group">
+                  {editing ? (
+                    <>
+                      <button
+                        className="btn btn-sm btn-primary"
+                        onClick={saveEdits}
+                        disabled={busy}
+                      >
+                        <IconCheck size={14} />
+                        {busy ? "Saving…" : "Save"}
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => setEditing(false)}
+                        disabled={busy}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => startEditing(minutes)}
+                        disabled={busy}
+                      >
+                        <IconEdit size={14} />
+                        Edit
+                      </button>
+                      <button className="btn btn-sm" onClick={toggleHistory} disabled={busy}>
+                        <IconHistory size={14} />
+                        {showHistory ? "Hide history" : "History"}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
-              <div className="card-body">
-                <p className="summary-text">{minutes.summary}</p>
-              </div>
+
+              {editing ? (
+                <div className="card-body">
+                  <div className="editor">
+                    <label className="field">
+                      <span>Summary</span>
+                      <textarea
+                        rows={5}
+                        value={draft.summary}
+                        onChange={(e) => setDraft({ ...draft, summary: e.target.value })}
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Decisions — one per line</span>
+                      <textarea
+                        rows={4}
+                        value={draft.decisions}
+                        onChange={(e) => setDraft({ ...draft, decisions: e.target.value })}
+                      />
+                      <span className="hint">decision | decided by | rationale</span>
+                    </label>
+
+                    <label className="field">
+                      <span>Action items — one per line</span>
+                      <textarea
+                        rows={4}
+                        value={draft.action_items}
+                        onChange={(e) => setDraft({ ...draft, action_items: e.target.value })}
+                      />
+                      <span className="hint">task | owner | due</span>
+                    </label>
+
+                    <label className="field">
+                      <span>Topics — one per line</span>
+                      <textarea
+                        rows={4}
+                        value={draft.topics}
+                        onChange={(e) => setDraft({ ...draft, topics: e.target.value })}
+                      />
+                      <span className="hint">title | discussion</span>
+                    </label>
+
+                    <label className="field">
+                      <span>Open questions — one per line</span>
+                      <textarea
+                        rows={3}
+                        value={draft.open_questions}
+                        onChange={(e) => setDraft({ ...draft, open_questions: e.target.value })}
+                      />
+                    </label>
+                  </div>
+                </div>
+              ) : (
+                <div className="card-body">
+                  <p className="summary-text">{minutes.summary}</p>
+                </div>
+              )}
+
+              {!editing && minutes.edited_at && (
+                <div className="card-foot">
+                  Last edited {new Date(minutes.edited_at).toLocaleString()}. Regenerating
+                  keeps this version in the history.
+                </div>
+              )}
             </div>
 
-            {minutes.decisions.length > 0 && (
+            {showHistory && !editing && (
+              <div className="card">
+                <div className="card-head">
+                  <h3>Version history</h3>
+                  <span className="dim tiny">{history.length} versions</span>
+                </div>
+                <div className="card-body">
+                  {history.length === 0 && <p className="dim small">No history yet.</p>}
+                  {history.map((v) => (
+                    <div key={v.version} className="version-row">
+                      <span>
+                        <span className="no">v{v.version}</span>{" "}
+                        <span className="pill plain">{v.source}</span>
+                        <span className="meta">
+                          {new Date(v.created_at).toLocaleString()} · {v.model}
+                        </span>
+                      </span>
+                      <span className="row" style={{ gap: 8 }}>
+                        {v.version === minutes.version ? (
+                          <span className="pill completed">current</span>
+                        ) : (
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => restore(v.version)}
+                            disabled={busy}
+                          >
+                            Restore
+                          </button>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="card-foot">
+                  Restoring makes an older version current again as a new version, so nothing
+                  is ever lost.
+                </div>
+              </div>
+            )}
+
+            {!editing && minutes.decisions.length > 0 && (
               <div className="card">
                 <div className="card-head">
                   <h3>Decisions</h3>
@@ -376,7 +701,7 @@ export default function MeetingDetail() {
               </div>
             )}
 
-            {minutes.action_items.length > 0 && (
+            {!editing && minutes.action_items.length > 0 && (
               <div className="card">
                 <div className="card-head">
                   <h3>Action items</h3>
@@ -405,7 +730,7 @@ export default function MeetingDetail() {
               </div>
             )}
 
-            {minutes.topics.length > 0 && (
+            {!editing && minutes.topics.length > 0 && (
               <div className="card">
                 <div className="card-head">
                   <h3>Topics</h3>
@@ -423,7 +748,7 @@ export default function MeetingDetail() {
               </div>
             )}
 
-            {minutes.open_questions.length > 0 && (
+            {!editing && minutes.open_questions.length > 0 && (
               <div className="card">
                 <div className="card-head">
                   <h3>Open questions</h3>
@@ -438,17 +763,27 @@ export default function MeetingDetail() {
               </div>
             )}
 
-            <p className="tiny dim">
-              Generated by {minutes.model}
-              {minutes.languages_detected.length > 0 &&
-                ` · languages: ${minutes.languages_detected.join(", ")}`}
-            </p>
+            {!editing && (
+              <p className="tiny dim">
+                Generated by {minutes.model}
+                {minutes.languages_detected.length > 0 &&
+                  ` · languages: ${minutes.languages_detected.join(", ")}`}
+              </p>
+            )}
           </>
         ) : (
           <div className="card">
             <div className="empty">
-              <p className="big">No minutes yet</p>
-              <p className="small">Generate them from the transcript with the button above.</p>
+              <p className="big">
+                {meeting.minutes_deleted_at ? "Minutes deleted" : "No minutes yet"}
+              </p>
+              <p className="small">
+                {meeting.minutes_deleted_at
+                  ? `Removed on ${new Date(
+                      meeting.minutes_deleted_at,
+                    ).toLocaleDateString()} under the retention policy.`
+                  : "Generate them from the transcript with the button above."}
+              </p>
             </div>
           </div>
         ))}

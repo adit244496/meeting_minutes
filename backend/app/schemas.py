@@ -100,6 +100,8 @@ class MeetingOut(ORMModel):
     started_at: datetime
     processed_at: datetime | None
     audio_deleted_at: datetime | None
+    transcript_deleted_at: datetime | None
+    minutes_deleted_at: datetime | None
 
 
 class MinutesOut(ORMModel):
@@ -111,6 +113,36 @@ class MinutesOut(ORMModel):
     languages_detected: list
     model: str
     created_at: datetime
+    version: int = 1
+    source: str = "generated"
+    edited_at: datetime | None = None
+
+
+class MinutesUpdate(BaseModel):
+    """A hand-edited replacement for the current minutes.
+
+    Everything is optional: the editor can save just the summary without having
+    to echo back topics and action items it did not touch.
+    """
+
+    summary: str | None = None
+    topics: list | None = None
+    decisions: list | None = None
+    action_items: list | None = None
+    open_questions: list | None = None
+
+
+class MinutesVersionOut(ORMModel):
+    version: int
+    source: str
+    model: str
+    created_at: datetime
+    summary: str
+    topics: list
+    decisions: list
+    action_items: list
+    open_questions: list
+    languages_detected: list
 
 
 class MeetingDetail(MeetingOut):

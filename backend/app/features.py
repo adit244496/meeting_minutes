@@ -53,6 +53,97 @@ TOGGLES: tuple[Toggle, ...] = (
 BY_KEY = {toggle.key: toggle for toggle in TOGGLES}
 
 
+@dataclass(frozen=True)
+class Number:
+    """A numeric setting an admin can change without a redeploy."""
+
+    key: str
+    default: int
+    label: str
+    description: str
+    unit: str = "days"
+    minimum: int = 0
+    maximum: int = 3650
+
+
+# Retention, one tier at a time. Audio is by far the largest and least
+# re-readable artifact, so it goes first; the transcript is small text; the
+# minutes are the thing people actually come back to, so they default to
+# forever. 0 means "keep forever" everywhere here.
+NUMBERS: tuple[Number, ...] = (
+    Number(
+        key="retention_days_recordings",
+        default=7,
+        label="Keep recordings for",
+        description=(
+            "Audio files are deleted after this many days. The transcript and "
+            "minutes for those meetings are kept. 0 keeps recordings forever."
+        ),
+    ),
+    Number(
+        key="retention_days_transcripts",
+        default=30,
+        label="Keep transcripts for",
+        description=(
+            "The word-by-word transcript is deleted after this many days. The "
+            "minutes survive, so the record of what was decided remains. "
+            "0 keeps transcripts forever."
+        ),
+    ),
+    Number(
+        key="retention_days_minutes",
+        default=0,
+        label="Keep minutes for",
+        description=(
+            "Minutes and their edit history. 0 keeps them forever, which is the "
+            "default - they are small and are usually the reason to keep a "
+            "meeting at all."
+        ),
+    ),
+)
+
+NUMBER_BY_KEY = {number.key: number for number in NUMBERS}
+
+
+def get_number(db: Session, key: str) -> int:
+    number = NUMBER_BY_KEY.get(key)
+    if number is None:
+        raise KeyError(f"unknown numeric setting {key!r}")
+
+    row = db.get(AppSetting, key)
+    if row is None:
+        return number.default
+    try:
+        return max(number.minimum, min(number.maximum, int(row.value)))
+    except (TypeError, ValueError):
+        # A malformed stored value must not disable retention silently.
+        return number.default
+
+
+def all_numbers(db: Session) -> dict[str, int]:
+    return {number.key: get_number(db, number.key) for number in NUMBERS}
+
+
+def set_number(db: Session, key: str, value: int, user_id=None) -> int:
+    number = NUMBER_BY_KEY.get(key)
+    if number is None:
+        raise KeyError(f"unknown numeric setting {key!r}")
+    if not number.minimum <= value <= number.maximum:
+        raise ValueError(
+            f"{key} must be between {number.minimum} and {number.maximum}, got {value}"
+        )
+
+    row = db.get(AppSetting, key)
+    if row is None:
+        row = AppSetting(key=key, value=str(value))
+        db.add(row)
+    else:
+        row.value = str(value)
+    row.updated_by = user_id
+    db.commit()
+    return value
+
+
 def is_enabled(db: Session, key: str) -> bool:
     toggle = BY_KEY.get(key)
     if toggle is None:

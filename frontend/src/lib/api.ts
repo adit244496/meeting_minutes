@@ -69,6 +69,8 @@ export interface Meeting {
   started_at: string;
   processed_at: string | null;
   audio_deleted_at: string | null;
+  transcript_deleted_at: string | null;
+  minutes_deleted_at: string | null;
 }
 
 export interface Participant {
@@ -99,6 +101,32 @@ export interface Minutes {
   languages_detected: string[];
   model: string;
   created_at: string;
+  version: number;
+  source: string;
+  edited_at: string | null;
+}
+
+export interface MinutesVersion {
+  version: number;
+  source: string;
+  model: string;
+  created_at: string;
+  summary: string;
+  topics: Minutes["topics"];
+  decisions: Minutes["decisions"];
+  action_items: Minutes["action_items"];
+  open_questions: string[];
+  languages_detected: string[];
+}
+
+export interface RetentionSetting {
+  key: string;
+  label: string;
+  description: string;
+  unit: string;
+  minimum: number;
+  maximum: number;
+  value: number;
 }
 
 export interface MeetingDetail extends Meeting {
@@ -170,6 +198,17 @@ export const api = {
     request<Minutes>(`/api/meetings/${id}/minutes${language ? `?language=${language}` : ""}`, {
       method: "POST",
     }),
+  updateMinutes: (id: string, body: Partial<Omit<Minutes, "model" | "created_at" | "version" | "source" | "edited_at">>) =>
+    request<Minutes>(`/api/meetings/${id}/minutes`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  listMinutesVersions: (id: string) =>
+    request<MinutesVersion[]>(`/api/meetings/${id}/minutes/versions`),
+  restoreMinutesVersion: (id: string, version: number) =>
+    request<Minutes>(`/api/meetings/${id}/minutes/versions/${version}/restore`, {
+      method: "POST",
+    }),
 
   listToggles: () => request<FeatureToggle[]>("/api/settings"),
   setToggle: (key: string, enabled: boolean) =>
@@ -177,6 +216,45 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ enabled }),
     }),
+
+  listRetention: () => request<RetentionSetting[]>("/api/settings/numbers"),
+  setRetention: (key: string, value: number) =>
+    request<RetentionSetting>(`/api/settings/numbers/${key}`, {
+      method: "PATCH",
+      body: JSON.stringify({ value }),
+    }),
+
+  /** Fetch a protected file and hand it to the browser as a download.
+   *
+   *  A plain <a href> cannot send the Authorization header, so the file is
+   *  fetched as a blob first. The server's filename is preferred - it carries
+   *  the meeting title, which may be in Devanagari or Bengali. */
+  async download(path: string, fallbackName: string) {
+    const headers = new Headers();
+    const jwt = token.get();
+    if (jwt) headers.set("Authorization", `Bearer ${jwt}`);
+
+    const response = await fetch(`${BASE}${path}`, { headers });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new ApiError(response.status, body.detail ?? response.statusText);
+    }
+
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+    const plain = /filename="([^"]+)"/i.exec(disposition);
+    const name = utf8 ? decodeURIComponent(utf8[1]) : plain ? plain[1] : fallbackName;
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  },
 
   // SSE has no Authorization header; see the endpoint docstring for the
   // production fix (short-lived signed token in the query string).

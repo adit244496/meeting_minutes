@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Meeting Minutes — design system
+   Neo Minutes — design system
 
    Both themes are driven entirely by custom properties; components never use a
    colour literal, so light and dark stay in step. A viewer on "system" gets an
@@ -489,6 +489,38 @@ tbody tr:hover { background: var(--surface-2); }
 .toggle-row .label { font-weight: 600; font-size: 0.9rem; }
 .toggle-row .desc { color: var(--text-2); font-size: 0.84rem; margin-top: 2px; }
 
+/* ---------- retention + minutes editing ---------- */
+
+.retention-row {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 16px; flex-wrap: wrap;
+}
+.retention-row .label { font-weight: 600; font-size: 0.9rem; display: block; }
+.retention-row .desc { color: var(--text-2); font-size: 0.84rem; max-width: 60ch; display: block; margin-top: 2px; }
+
+.editor { display: flex; flex-direction: column; gap: 14px; }
+.editor textarea {
+  font-family: var(--font-ui);
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 96px;
+}
+/* The hint sits inside label.field, so it has to undo the label weight. */
+.editor .hint {
+  color: var(--text-3); font-size: 0.78rem;
+  font-weight: 450; margin-top: 4px; margin-bottom: 0;
+}
+
+.version-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+.version-row:last-child { border-bottom: none; }
+.version-row .meta { color: var(--text-3); font-size: 0.8rem; margin-top: 2px; }
+.version-row .no { font-family: var(--font-mono); font-weight: 650; font-size: 0.82rem; }
+
 .auth { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .auth-card {
   width: 100%; max-width: 400px;
@@ -520,6 +552,7 @@ tbody tr:hover { background: var(--surface-2); }
 .small  { font-size: 0.84rem; }
 .tiny   { font-size: 0.76rem; }
 .mono   { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.nowrap { white-space: nowrap; }
 .err    { color: var(--err); }
 .row    { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .grow   { flex: 1; min-width: 0; }

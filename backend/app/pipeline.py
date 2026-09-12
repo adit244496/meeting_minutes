@@ -36,6 +36,7 @@ from app.asr import get_provider
 from app.audio import duration_seconds, to_wav16k_mono
 from app.config import settings
 from app.lang import analyse
+from app.minutes import versions as versions_store
 from app.minutes.generate import generate_minutes
 from app.models import (
     Meeting,
@@ -165,9 +166,17 @@ def _replace_transcript(db: Session, meeting: Meeting, result, resolutions) -> N
         ).scalars()
     }
 
-    for existing in list(meeting.segments):
+    # Query rather than iterating meeting.segments / meeting.participants: those
+    # collections were loaded before this pipeline inserted anything and the
+    # session does not expire on commit, so on a reprocess they can be empty
+    # while rows exist - leaving the old transcript behind alongside the new one.
+    for existing in db.execute(
+        select(Segment).where(Segment.meeting_id == meeting.id)
+    ).scalars():
         db.delete(existing)
-    for existing in list(meeting.participants):
+    for existing in db.execute(
+        select(Participant).where(Participant.meeting_id == meeting.id)
+    ).scalars():
         if existing.speaker_label not in manual:
             db.delete(existing)
     db.flush()
@@ -218,7 +227,20 @@ def _replace_transcript(db: Session, meeting: Meeting, result, resolutions) -> N
 def generate_and_store_minutes(
     db: Session, meeting: Meeting, output_language: str | None = None
 ) -> None:
-    names = {p.speaker_label: p.display_name for p in meeting.participants}
+    # Query the rows rather than reading meeting.segments / meeting.participants.
+    # The pipeline inserts them with db.add(Segment(meeting_id=...)) instead of
+    # appending to the relationship, and the session is expire_on_commit=False,
+    # so those collections stay as they were first loaded - empty. Reading them
+    # here produced "cannot generate minutes from an empty transcript" for a
+    # meeting whose transcript had saved perfectly well.
+    participants = db.execute(
+        select(Participant).where(Participant.meeting_id == meeting.id)
+    ).scalars().all()
+    rows = db.execute(
+        select(Segment).where(Segment.meeting_id == meeting.id).order_by(Segment.idx)
+    ).scalars().all()
+
+    names = {p.speaker_label: p.display_name for p in participants}
     segments = [
         {
             "start_ms": s.start_ms,
@@ -226,7 +248,7 @@ def generate_and_store_minutes(
             "text": s.text,
             "language": s.language,
         }
-        for s in sorted(meeting.segments, key=lambda s: s.idx)
+        for s in rows
     ]
 
     generated = generate_minutes(
@@ -240,16 +262,21 @@ def generate_and_store_minutes(
         db.delete(existing)
         db.flush()
 
-    db.add(
-        Minutes(
-            meeting_id=meeting.id,
-            summary=generated.summary,
-            decisions=[d.model_dump() for d in generated.decisions],
-            action_items=[a.model_dump() for a in generated.action_items],
-            topics=[t.model_dump() for t in generated.topics],
-            open_questions=generated.open_questions,
-            languages_detected=generated.languages_detected,
-            model=settings.anthropic_model,
-        )
+    # The version number continues the meeting's history rather than restarting
+    # at 1: regenerating must never look like it erased someone's edit, and the
+    # edit itself is still in minutes_versions and can be restored.
+    minutes = Minutes(
+        meeting_id=meeting.id,
+        summary=generated.summary,
+        decisions=[d.model_dump() for d in generated.decisions],
+        action_items=[a.model_dump() for a in generated.action_items],
+        topics=[t.model_dump() for t in generated.topics],
+        open_questions=generated.open_questions,
+        languages_detected=generated.languages_detected,
+        model=settings.anthropic_model,
+        version=versions_store.next_version(db, meeting.id),
+        source="generated",
     )
+    db.add(minutes)
     db.flush()
+    versions_store.record(db, meeting.id, minutes, source="generated")

@@ -54,6 +54,33 @@ export const IconUpload = ({ size = 17, className }: Props) => (
   </svg>
 );
 
+export const IconDownload = ({ size = 16, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="M12 3.5v12M8 11.5l4 4 4-4" />
+    <path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5V17" />
+  </svg>
+);
+
+export const IconEdit = ({ size = 15, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" />
+    <path d="M14.5 6.5 17.5 9.5" />
+  </svg>
+);
+
+export const IconHistory = ({ size = 15, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 4.5V9h4.5" />
+    <path d="M12 7.5V12l3 1.8" />
+  </svg>
+);
+
+export const IconCheck = ({ size = 15, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="m5 12.5 4.5 4.5L19 7" />
+  </svg>
+);
+
 export const IconSearch = ({ size = 17, className }: Props) => (
   <svg {...base(size)} className={className}>
     <circle cx="10.5" cy="10.5" r="6" />

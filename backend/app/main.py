@@ -11,7 +11,14 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
 from app import storage
-from app.api import auth, meetings, minutes, settings as settings_api, users
+from app.api import (
+    auth,
+    downloads,
+    meetings,
+    minutes,
+    settings as settings_api,
+    users,
+)
 from app.config import settings
 from app.db import Base, SessionLocal, engine
 from app.models import Role, User
@@ -66,6 +73,32 @@ def _check_ffmpeg() -> None:
     )
 
 
+def _ensure_columns() -> None:
+    """Add columns that shipped after a database was first created.
+
+    `create_all` only creates missing *tables* - it never alters an existing
+    one. Without this, upgrading an already-running install leaves the app
+    querying columns that do not exist. Each statement is idempotent, so this is
+    safe to run on every boot.
+
+    This is a stopgap for a project still using create_all. Anything more
+    involved than adding a nullable column (renames, backfills, type changes)
+    needs Alembic - see README "Before production".
+    """
+    statements = [
+        "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS transcript_deleted_at TIMESTAMPTZ",
+        "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS minutes_deleted_at TIMESTAMPTZ",
+        "ALTER TABLE segments ADD COLUMN IF NOT EXISTS scripts VARCHAR(32)",
+        "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'generated'",
+        "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ",
+        "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS edited_by UUID",
+    ]
+    with engine.begin() as conn:
+        for statement in statements:
+            conn.execute(text(statement))
+
+
 def bootstrap() -> None:
     """Create tables, the storage bucket, and the first admin.
 
@@ -75,6 +108,7 @@ def bootstrap() -> None:
     _check_ffmpeg()
     _require_pgvector()
     Base.metadata.create_all(bind=engine)
+    _ensure_columns()
 
     try:
         storage.ensure_ready()
@@ -106,7 +140,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Meeting Minutes",
+    title="Neo Minutes",
     description=(
         "Multilingual (English / Hindi / Bengali) meeting transcription with "
         "speaker identification and automatic minutes."
@@ -130,6 +164,7 @@ app.include_router(users.router)
 app.include_router(meetings.router)
 app.include_router(minutes.router)
 app.include_router(settings_api.router)
+app.include_router(downloads.router)
 
 
 @app.get("/health", tags=["health"])

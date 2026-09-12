@@ -40,6 +40,67 @@ def list_toggles(
     ]
 
 
+class NumberOut(BaseModel):
+    key: str
+    label: str
+    description: str
+    unit: str
+    minimum: int
+    maximum: int
+    value: int
+
+
+class NumberUpdate(BaseModel):
+    value: int
+
+
+# Declared before the generic "/{key}" route below so the paths cannot collide.
+@router.get("/numbers", response_model=list[NumberOut])
+def list_numbers(
+    db: Session = Depends(get_db),
+    _: User = Depends(current_user),
+) -> list[NumberOut]:
+    values = features.all_numbers(db)
+    return [
+        NumberOut(
+            key=n.key,
+            label=n.label,
+            description=n.description,
+            unit=n.unit,
+            minimum=n.minimum,
+            maximum=n.maximum,
+            value=values[n.key],
+        )
+        for n in features.NUMBERS
+    ]
+
+
+@router.patch("/numbers/{key}", response_model=NumberOut)
+def update_number(
+    key: str,
+    payload: NumberUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> NumberOut:
+    try:
+        value = features.set_number(db, key, payload.value, user_id=admin.id)
+    except KeyError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"No such setting: {key}") from None
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+
+    n = features.NUMBER_BY_KEY[key]
+    return NumberOut(
+        key=n.key,
+        label=n.label,
+        description=n.description,
+        unit=n.unit,
+        minimum=n.minimum,
+        maximum=n.maximum,
+        value=value,
+    )
+
+
 @router.patch("/{key}", response_model=ToggleOut)
 def update_toggle(
     key: str,

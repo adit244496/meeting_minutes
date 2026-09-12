@@ -8,11 +8,10 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from app import storage
+from app import features, storage
 from app.audio import to_wav16k_mono
-from app.config import settings
 from app.db import SessionLocal
-from app.models import Meeting, Segment, Voiceprint
+from app.models import Meeting, Minutes, MinutesVersion, Segment, Voiceprint
 from app.pipeline import process_meeting
 from app.speakers.identify import embed_cluster
 from app.worker.celery_app import celery
@@ -102,43 +101,105 @@ def harvest_voiceprint_task(self, meeting_id: str, speaker_label: str, user_id: 
 
 
 @celery.task(name="recordings.purge", bind=True, max_retries=0)
-def purge_old_recordings(self, retention_days: int | None = None) -> dict:
-    """Delete meeting audio past its retention window.
+def purge_old_recordings(self) -> dict:
+    """Apply the retention policy to each tier of meeting data.
 
-    Deliberately narrow: this removes the audio file and stamps
-    `audio_deleted_at`. The meeting row, its transcript segments, its speakers
-    and its minutes are all left alone - those are the record of what happened
-    and they are kept indefinitely. Enrollment voiceprints are also untouched;
-    they live under a different key prefix and are needed for future matching.
+    Three independent windows, administered from Users & settings rather than
+    the environment, because retention is a policy decision somebody makes once
+    and then changes without a deploy:
+
+      recordings  - the audio file. Largest artifact, shortest default (7 days).
+      transcripts - the segment rows. Small, medium default (30 days).
+      minutes     - the minutes and their edit history. Default: forever.
+
+    0 means keep forever for any tier. The meeting row itself is never deleted:
+    what is gone is stamped, so the UI can explain an empty tab rather than
+    presenting a meeting that looks broken. Enrollment voiceprints live under a
+    different key prefix and are never touched here.
     """
-    days = retention_days if retention_days is not None else settings.recording_retention_days
-    if days <= 0:
-        return {"skipped": "retention disabled"}
-
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    now = datetime.now(timezone.utc)
     db = SessionLocal()
     try:
-        stale = db.execute(
-            select(Meeting).where(
-                Meeting.audio_key.is_not(None),
-                Meeting.started_at < cutoff,
-            )
-        ).scalars().all()
+        windows = features.all_numbers(db)
+        result: dict = {"retention_days": windows}
 
-        deleted, freed = 0, 0
+        # --- recordings -------------------------------------------------
+        days = windows["retention_days_recordings"]
+        freed = 0
+        stale = (
+            db.execute(
+                select(Meeting).where(
+                    Meeting.audio_key.is_not(None),
+                    Meeting.started_at < now - timedelta(days=days),
+                )
+            ).scalars().all()
+            if days > 0
+            else []
+        )
         for meeting in stale:
             freed += storage.size_bytes(meeting.audio_key) or 0
             storage.delete(meeting.audio_key)
             meeting.audio_key = None
-            meeting.audio_deleted_at = datetime.now(timezone.utc)
-            deleted += 1
+            meeting.audio_deleted_at = now
+        result["recordings_deleted"] = len(stale)
+        result["freed_bytes"] = freed
+
+        # --- transcripts ------------------------------------------------
+        days = windows["retention_days_transcripts"]
+        cleared = 0
+        if days > 0:
+            cutoff = now - timedelta(days=days)
+            meetings = db.execute(
+                select(Meeting).where(
+                    Meeting.started_at < cutoff,
+                    Meeting.transcript_deleted_at.is_(None),
+                )
+            ).scalars().all()
+            for meeting in meetings:
+                rows = db.execute(
+                    select(Segment).where(Segment.meeting_id == meeting.id)
+                ).scalars().all()
+                if not rows:
+                    continue
+                for row in rows:
+                    db.delete(row)
+                meeting.transcript_deleted_at = now
+                cleared += 1
+        result["transcripts_deleted"] = cleared
+
+        # --- minutes ----------------------------------------------------
+        days = windows["retention_days_minutes"]
+        removed = 0
+        if days > 0:
+            cutoff = now - timedelta(days=days)
+            meetings = db.execute(
+                select(Meeting).where(
+                    Meeting.started_at < cutoff,
+                    Meeting.minutes_deleted_at.is_(None),
+                )
+            ).scalars().all()
+            for meeting in meetings:
+                rows = db.execute(
+                    select(Minutes).where(Minutes.meeting_id == meeting.id)
+                ).scalars().all()
+                history = db.execute(
+                    select(MinutesVersion).where(MinutesVersion.meeting_id == meeting.id)
+                ).scalars().all()
+                if not rows and not history:
+                    continue
+                for row in list(rows) + list(history):
+                    db.delete(row)
+                meeting.minutes_deleted_at = now
+                removed += 1
+        result["minutes_deleted"] = removed
 
         db.commit()
-        if deleted:
+        if stale or cleared or removed:
             log.info(
-                "Purged %d recording(s) older than %d days, freed ~%.1f MB",
-                deleted, days, freed / 1_000_000,
+                "Retention sweep: %d recording(s) (~%.1f MB), %d transcript(s), "
+                "%d set(s) of minutes",
+                len(stale), freed / 1_000_000, cleared, removed,
             )
-        return {"deleted": deleted, "freed_bytes": freed, "retention_days": days}
+        return result
     finally:
         db.close()

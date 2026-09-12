@@ -133,6 +133,15 @@ class Meeting(Base):
     audio_deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # The other two retention stamps. Each tier is purged on its own schedule -
+    # audio first, then the transcript, and minutes usually never - so the UI
+    # can say what is gone rather than showing an empty tab with no reason.
+    transcript_deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    minutes_deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     language_hint: Mapped[str | None] = mapped_column(String(16), nullable=True)
     asr_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -231,4 +240,45 @@ class Minutes(Base):
     embedding = mapped_column(Vector(TEXT_EMBEDDING_DIM), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    # This row is always the *current* minutes. Every previous state lives in
+    # minutes_versions, so an edit is never destructive.
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    # generated | edited | restored - how this version came to be.
+    source: Mapped[str] = mapped_column(String(16), default="generated")
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    edited_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
     meeting: Mapped[Meeting] = relationship(back_populates="minutes")
+
+
+class MinutesVersion(Base):
+    """One historical state of a meeting's minutes.
+
+    Written on every generate, edit and restore, so the history is complete and
+    nothing a person typed can be lost to a later regeneration. Content is
+    duplicated rather than diffed: minutes are small, and a self-contained row
+    means restoring never has to replay a chain.
+    """
+
+    __tablename__ = "minutes_versions"
+    __table_args__ = (UniqueConstraint("meeting_id", "version"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    summary: Mapped[str] = mapped_column(Text)
+    decisions: Mapped[list] = mapped_column(JSON, default=list)
+    action_items: Mapped[list] = mapped_column(JSON, default=list)
+    topics: Mapped[list] = mapped_column(JSON, default=list)
+    open_questions: Mapped[list] = mapped_column(JSON, default=list)
+    languages_detected: Mapped[list] = mapped_column(JSON, default=list)
+    model: Mapped[str] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(16), default="generated")
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
