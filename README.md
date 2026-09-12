@@ -1,4 +1,4 @@
-# Meeting Minutes
+# Neo Minutes
 
 Multilingual meeting recording (English / Hindi / Bengali) with speaker
 identification and automatic minutes.

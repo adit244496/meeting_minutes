@@ -40,9 +40,9 @@ export default function Login() {
 
       <form className="auth-card" onSubmit={submit}>
         <div className="brand" style={{ marginBottom: 22 }}>
-          <span className="mark">MM</span>
+          <span className="mark">NM</span>
           <span>
-            <span className="name">Meeting Minutes</span>
+            <span className="name">Neo Minutes</span>
             <span className="sub">Transcripts &amp; minutes</span>
           </span>
         </div>

@@ -25,9 +25,9 @@ function initials(name: string) {
 function Brand() {
   return (
     <div className="brand">
-      <span className="mark">MM</span>
+      <span className="mark">NM</span>
       <span>
-        <span className="name">Meeting Minutes</span>
+        <span className="name">Neo Minutes</span>
         <span className="sub">English · हिन्दी · বাংলা</span>
       </span>
     </div>
