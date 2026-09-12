@@ -218,6 +218,10 @@ p  { margin: 0; }
 
 .scrim { display: none; }
 
+/* Set on <body> while the drawer is open: without it the page behind the drawer
+   scrolls under the finger on iOS and Android. */
+body.nav-open { overflow: hidden; }
+
 @media (max-width: 900px) {
   .topbar { display: flex; }
   .sidebar {
@@ -229,6 +233,24 @@ p  { margin: 0; }
   .sidebar[data-open="true"] { transform: translateX(0); }
   .scrim { display: block; position: fixed; inset: 0; background: rgb(6 10 16 / .5); z-index: 35; border: 0; padding: 0; }
   .content { padding: 18px 16px 64px; }
+}
+
+@media (max-width: 760px) {
+  /* 16px is the threshold below which iOS Safari zooms the page on focus, which
+     then leaves the layout scrolled sideways. Not a preference - a bug fix. */
+  input, select, textarea { font-size: 16px; }
+  h1 { font-size: 1.3rem; }
+  .card-body { padding: 15px; }
+  .card-head { padding: 12px 15px; }
+  .card-foot { padding: 10px 15px; }
+  th, td { padding: 11px 15px; }
+}
+
+@media (max-width: 420px) {
+  .content { padding: 14px 13px 56px; }
+  /* Full-width actions read as deliberate at this size; side by side they wrap
+     into ragged half-rows. */
+  .btn-group > .btn { flex: 1 1 100%; }
 }
 
 /* ---------- page header ---------- */
@@ -340,6 +362,17 @@ label.field > span {
   display: inline-flex; padding: 3px; gap: 3px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md);
   max-width: 100%; overflow-x: auto;
+  /* Kills the flicker of a scrollbar appearing under the tabs on desktop. */
+  scrollbar-width: none;
+}
+.segmented::-webkit-scrollbar { display: none; }
+/* Section nav for a page with several distinct panels: full width on a phone so
+   the tabs are thumb-sized rather than crammed against the left edge. */
+.segmented.wide { display: flex; width: 100%; }
+.segmented.wide button { flex: 1; }
+@media (max-width: 620px) {
+  .segmented.wide { justify-content: flex-start; }
+  .segmented.wide button { flex: 0 0 auto; }
 }
 .segmented button {
   border: 0; background: transparent; color: var(--text-2);
@@ -484,19 +517,54 @@ tbody tr:hover { background: var(--surface-2); }
 
 .summary-text { font-size: 1rem; line-height: 1.7; }
 
-.toggle-row { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; padding: 4px 0; }
-.toggle-row input { margin-top: 3px; width: 17px; height: 17px; flex: none; accent-color: var(--accent); cursor: pointer; }
-.toggle-row .label { font-weight: 600; font-size: 0.9rem; }
-.toggle-row .desc { color: var(--text-2); font-size: 0.84rem; margin-top: 2px; }
+/* ---------- settings rows ----------
+   One layout for every administered setting — a toggle, a retention window, an
+   API key. They used to be three bespoke arrangements, which read as three
+   unrelated screens stacked in one page. Explanation on the left, control on
+   the right, hairline between rows. */
 
-/* ---------- retention + minutes editing ---------- */
-
-.retention-row {
-  display: flex; justify-content: space-between; align-items: flex-start;
-  gap: 16px; flex-wrap: wrap;
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
+  gap: 10px 24px;
+  align-items: start;
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
 }
-.retention-row .label { font-weight: 600; font-size: 0.9rem; display: block; }
-.retention-row .desc { color: var(--text-2); font-size: 0.84rem; max-width: 60ch; display: block; margin-top: 2px; }
+.setting-row:first-child { padding-top: 0; border-top: none; }
+.setting-row:last-child { padding-bottom: 0; }
+
+.setting-copy { min-width: 0; }
+.setting-copy .label {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-weight: 600; font-size: 0.9rem;
+}
+.setting-copy .desc { color: var(--text-2); font-size: 0.84rem; margin-top: 3px; max-width: 62ch; }
+.setting-copy .env  { display: inline-block; margin-top: 5px; }
+
+.setting-control { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.setting-control .note { color: var(--text-3); font-size: 0.76rem; }
+.setting-control .with-unit { display: flex; align-items: center; gap: 9px; }
+
+/* Key entry: the field takes the room, the buttons keep their size. */
+.key-row { display: flex; gap: 7px; align-items: center; min-width: 0; }
+.key-row input, .key-row select { min-width: 0; flex: 1; }
+.key-row input[type="password"] { font-family: var(--font-mono); letter-spacing: .06em; }
+
+/* A checkbox setting keeps the whole row clickable. */
+label.setting-row { cursor: pointer; }
+.switch { display: flex; align-items: center; justify-content: flex-end; }
+.switch input {
+  width: 18px; height: 18px; flex: none;
+  accent-color: var(--accent); cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .setting-row { grid-template-columns: 1fr; gap: 10px; }
+  .switch { justify-content: flex-start; }
+}
+
+/* ---------- minutes editing ---------- */
 
 .editor { display: flex; flex-direction: column; gap: 14px; }
 .editor textarea {

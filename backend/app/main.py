@@ -93,6 +93,9 @@ def _ensure_columns() -> None:
         "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'generated'",
         "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ",
         "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS edited_by UUID",
+        # Was VARCHAR(255), which fits a toggle but not an encrypted API key.
+        # Widening is safe to repeat and never truncates.
+        "ALTER TABLE app_settings ALTER COLUMN value TYPE TEXT",
     ]
     with engine.begin() as conn:
         for statement in statements:

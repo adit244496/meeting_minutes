@@ -15,6 +15,7 @@ PyJWT==2.10.1
 bcrypt==4.2.1
 anthropic
 google-genai
+cryptography
 numpy==1.26.4
 soundfile==0.12.1
 jiwer

@@ -208,12 +208,20 @@ class Segment(Base):
 
 
 class AppSetting(Base):
-    """Admin-controlled feature toggles. See app/features.py for the catalogue."""
+    """One admin-controlled setting.
+
+    Three kinds of thing live here, keyed by convention:
+      plain keys    - feature toggles and numbers (app/features.py)
+      'cred:' keys  - API keys and model choices (app/credentials.py)
+
+    `value` is Text, not a bounded String: an encrypted Anthropic key is around
+    240 characters, which overflowed the original VARCHAR(255).
+    """
 
     __tablename__ = "app_settings"
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
-    value: Mapped[str] = mapped_column(String(255))
+    value: Mapped[str] = mapped_column(Text)
     updated_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

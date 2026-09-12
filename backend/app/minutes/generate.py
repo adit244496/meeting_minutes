@@ -100,12 +100,16 @@ def generate_minutes(
     segments: list[dict],
     output_language: str | None = None,
     model: str | None = None,
+    api_key: str | None = None,
 ) -> MeetingMinutes:
     """Produce structured minutes for one meeting.
 
     `segments` is a list of {start_ms, speaker, text, language} dicts - the
     resolved transcript, with speaker labels already replaced by real names
     where identification succeeded.
+
+    `api_key` and `model` come from the admin panel when the caller has a
+    database session; both fall back to the environment.
     """
     model = model or settings.anthropic_model
     lang_code = output_language or settings.minutes_language
@@ -114,17 +118,19 @@ def generate_minutes(
     if not segments:
         raise ValueError("cannot generate minutes from an empty transcript")
 
-    if not settings.anthropic_api_key:
+    key = api_key or settings.anthropic_api_key
+    if not key:
         # Say this plainly rather than letting the SDK raise an auth error from
         # deep inside a worker task. Transcription uses Gemini, so a meeting can
         # transcribe perfectly and only fail at this step.
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set, so minutes cannot be generated. "
-            "Add it to .env, or set AUTO_GENERATE_MINUTES=false to keep "
-            "transcripts only."
+            "No Anthropic API key is configured, so minutes cannot be generated. "
+            "Add one under Users & settings > Providers & keys, or set "
+            "ANTHROPIC_API_KEY in .env - or set AUTO_GENERATE_MINUTES=false to "
+            "keep transcripts only."
         )
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key or None)
+    client = anthropic.Anthropic(api_key=key)
 
     prompt = (
         f"Meeting title: {title}\n\n"

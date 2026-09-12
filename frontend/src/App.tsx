@@ -59,6 +59,13 @@ export default function App() {
     setNavOpen(false);
   }, [location.pathname]);
 
+  // Lock the page behind the drawer. Without this the content scrolls under the
+  // finger on a phone while the drawer sits still, which feels broken.
+  useEffect(() => {
+    document.body.classList.toggle("nav-open", navOpen);
+    return () => document.body.classList.remove("nav-open");
+  }, [navOpen]);
+
   if (loading) {
     return (
       <div className="auth">

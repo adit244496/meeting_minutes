@@ -1,15 +1,21 @@
-"""Admin-controlled feature toggles."""
+"""Admin-controlled settings: feature toggles, retention windows, API keys."""
 
 from __future__ import annotations
 
+import logging
+from dataclasses import asdict
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app import features
+from app import credentials, features
 from app.db import get_db
 from app.deps import current_user, require_admin
 from app.models import User
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -99,6 +105,69 @@ def update_number(
         maximum=n.maximum,
         value=value,
     )
+
+
+class CredentialOut(BaseModel):
+    """One credential's status. Deliberately never carries the value itself."""
+
+    key: str
+    label: str
+    description: str
+    env_var: str
+    secret: bool
+    placeholder: str
+    choices: list[str]
+    configured: bool
+    source: str
+    masked: str
+    updated_at: datetime | None
+
+
+class CredentialUpdate(BaseModel):
+    value: str = Field(
+        default="",
+        description="The new value. Empty clears it, falling back to the environment.",
+    )
+
+
+@router.get("/credentials", response_model=list[CredentialOut])
+def list_credentials(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> list[CredentialOut]:
+    """Administrators only, and masked - see the module docstring in credentials.py.
+
+    Unlike the toggles above this is not readable by ordinary members: which
+    providers an organisation pays for is not something the meeting UI needs.
+    """
+    return [CredentialOut(**asdict(s)) for s in credentials.describe(db)]
+
+
+@router.put("/credentials/{key}", response_model=CredentialOut)
+def update_credential(
+    key: str,
+    payload: CredentialUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> CredentialOut:
+    try:
+        current = credentials.set_value(db, key, payload.value, user_id=admin.id)
+    except KeyError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"No such setting: {key}") from None
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    except RuntimeError as exc:
+        # Encryption unavailable: a gap on the server, not the admin's mistake.
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from None
+
+    # The name only. Never the value, and never in an exception either.
+    log.info(
+        "Administrator %s %s credential %r",
+        admin.email,
+        "cleared" if not payload.value.strip() else "updated",
+        key,
+    )
+    return CredentialOut(**asdict(current))
 
 
 @router.patch("/{key}", response_model=ToggleOut)

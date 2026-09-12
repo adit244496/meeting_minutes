@@ -129,6 +129,24 @@ export interface RetentionSetting {
   value: number;
 }
 
+/** An API key or model choice, as the admin panel is allowed to see it.
+ *
+ *  `masked` is the whole story for a secret — the real value is never sent to
+ *  the browser. For a non-secret (a model name, the provider) it is the value. */
+export interface CredentialSetting {
+  key: string;
+  label: string;
+  description: string;
+  env_var: string;
+  secret: boolean;
+  placeholder: string;
+  choices: string[];
+  configured: boolean;
+  source: "database" | "environment" | "unset";
+  masked: string;
+  updated_at: string | null;
+}
+
 export interface MeetingDetail extends Meeting {
   participants: Participant[];
   segments: Segment[];
@@ -221,6 +239,14 @@ export const api = {
   setRetention: (key: string, value: number) =>
     request<RetentionSetting>(`/api/settings/numbers/${key}`, {
       method: "PATCH",
+      body: JSON.stringify({ value }),
+    }),
+
+  // Admin-only, and the response carries a mask rather than the key.
+  listCredentials: () => request<CredentialSetting[]>("/api/settings/credentials"),
+  setCredential: (key: string, value: string) =>
+    request<CredentialSetting>(`/api/settings/credentials/${key}`, {
+      method: "PUT",
       body: JSON.stringify({ value }),
     }),
 

@@ -31,7 +31,7 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import progress, storage
+from app import credentials, progress, storage
 from app.asr import get_provider
 from app.audio import duration_seconds, to_wav16k_mono
 from app.config import settings
@@ -97,7 +97,7 @@ def process_meeting(db: Session, meeting_id: uuid.UUID) -> None:
             db.commit()
 
             # [2] Hosted ASR ----------------------------------------------
-            provider = get_provider(meeting.asr_provider)
+            provider = get_provider(meeting.asr_provider, db=db)
             progress.publish(mid, "transcribe", 20, f"Transcribing via {provider.name}")
             result = provider.transcribe(wav, language_hint=meeting.language_hint)
             if not result.segments:
@@ -251,8 +251,15 @@ def generate_and_store_minutes(
         for s in rows
     ]
 
+    # Resolved here rather than inside generate_minutes: that module has no
+    # session, and the admin panel has to win over the environment.
+    model = credentials.resolve(db, "anthropic_model") or settings.anthropic_model
     generated = generate_minutes(
-        title=meeting.title, segments=segments, output_language=output_language
+        title=meeting.title,
+        segments=segments,
+        output_language=output_language,
+        model=model,
+        api_key=credentials.resolve(db, "anthropic_api_key") or None,
     )
 
     existing = db.execute(
@@ -273,7 +280,7 @@ def generate_and_store_minutes(
         topics=[t.model_dump() for t in generated.topics],
         open_questions=generated.open_questions,
         languages_detected=generated.languages_detected,
-        model=settings.anthropic_model,
+        model=model,
         version=versions_store.next_version(db, meeting.id),
         source="generated",
     )

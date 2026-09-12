@@ -81,6 +81,29 @@ export const IconCheck = ({ size = 15, className }: Props) => (
   </svg>
 );
 
+export const IconKey = ({ size = 17, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <circle cx="8" cy="8" r="4.2" />
+    <path d="m11 11 8 8M16.5 16.5 15 18M19 14l-1.5 1.5" />
+  </svg>
+);
+
+export const IconEye = ({ size = 15, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+    <circle cx="12" cy="12" r="2.8" />
+  </svg>
+);
+
+export const IconEyeOff = ({ size = 15, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="M4 4l16 16" />
+    <path d="M9.6 5.9A9.4 9.4 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-2.5 3.3" />
+    <path d="M6.3 7.9A17.4 17.4 0 0 0 2.5 12S6 18.5 12 18.5a9 9 0 0 0 3.3-.6" />
+    <path d="M9.9 9.9a2.8 2.8 0 0 0 3.9 3.9" />
+  </svg>
+);
+
 export const IconSearch = ({ size = 17, className }: Props) => (
   <svg {...base(size)} className={className}>
     <circle cx="10.5" cy="10.5" r="6" />
