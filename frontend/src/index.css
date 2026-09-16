@@ -1524,3 +1524,85 @@ body { background: var(--bg); }
   .auth { min-height: calc(100vh / var(--app-zoom)); }
   .timeline { max-height: calc(60vh / var(--app-zoom)); }
 }
+
+/* ==========================================================================
+   Phones: larger type, one-row stats, roomier controls
+   The compact desktop scale is too small on a handset held at arm's length,
+   and the 90% app zoom above deliberately stops at 901px.
+   ========================================================================== */
+
+@media (max-width: 900px) {
+  body { font-size: 15.5px; line-height: 1.55; }
+  .page-head h1 { font-size: 1.45rem; }
+  .page-head .lead { font-size: 0.94rem; }
+  .card-head h3 { font-size: 0.76rem; }
+
+  /* Comfortable touch targets - 44px is the size a thumb reliably hits. */
+  .btn { min-height: 44px; font-size: 0.94rem; }
+  .btn-sm { min-height: 38px; font-size: 0.88rem; }
+  .btn-icon { width: 44px; }
+  select, input[type="text"], input[type="email"], input[type="password"],
+  input[type="search"], input[type="number"], textarea { min-height: 44px; }
+  .segmented button { min-height: 38px; font-size: 0.9rem; }
+
+  .list-row { padding: 12px; gap: 12px; }
+  .list-row .title { font-size: 1rem; }
+  .list-row .meta { font-size: 0.85rem; }
+  .row-mark { width: 38px; height: 38px; font-size: 0.78rem; }
+  .pill { font-size: 0.78rem; padding: 3px 10px; }
+
+  .seg .said { font-size: 0.95rem; }
+  .seg .who { font-size: 0.88rem; }
+  .md-summary { font-size: 1rem; }
+  .md-strong { font-size: 0.96rem; }
+  .md-note { font-size: 0.9rem; }
+  .live-transcript p { font-size: 0.94rem; }
+}
+
+/* Meetings / hours / ready stay on one row whatever the count. */
+@media (max-width: 720px) {
+  .kpis { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+  .kpi { min-width: 0; padding: 8px 10px; align-items: flex-start; }
+  .kpi b { font-size: 1.25rem; }
+  .kpi small { font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+}
+@media (max-width: 420px) {
+  .kpi { padding: 7px 8px; }
+  .kpi b { font-size: 1.1rem; }
+  .kpi small { font-size: 0.72rem; }
+}
+
+/* ---------- sign in ---------- */
+.auth {
+  padding: 24px 16px;
+  background:
+    radial-gradient(1100px 520px at 50% -12%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+    var(--bg);
+}
+.auth-theme { position: fixed; top: 14px; right: 14px; }
+.auth-card {
+  max-width: 420px; padding: 30px 26px 24px; border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+}
+.auth-head { text-align: center; margin-bottom: 22px; }
+.auth-head .mark {
+  width: 52px; height: 52px; border-radius: 15px; margin: 0 auto 14px;
+  display: grid; place-items: center; font-size: 17px; font-weight: 700; color: #fff;
+  background: linear-gradient(135deg, #818cf8 0%, #4f46e5 55%, #7c3aed 100%);
+  box-shadow: 0 10px 26px -10px rgb(99 102 241 / .9);
+}
+.auth-head h1 { font-size: 1.5rem; font-weight: 500; letter-spacing: -0.02em; }
+.auth-head h1 b { font-weight: 750; }
+.auth-head p { margin-top: 6px; color: var(--text-2); font-size: 0.9rem; }
+.auth-card .field > span { font-size: 0.82rem; }
+.auth-card .input-affix { display: flex; width: 100%; }
+.auth-submit { min-height: 46px; font-size: 0.98rem; margin-top: 2px; }
+.auth-foot {
+  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border);
+  text-align: center; color: var(--text-3); font-size: 0.8rem;
+}
+@media (max-width: 480px) {
+  .auth { padding: 18px 14px; }
+  .auth-card { padding: 26px 18px 20px; }
+  .auth-head h1 { font-size: 1.35rem; }
+}

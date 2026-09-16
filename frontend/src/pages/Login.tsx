@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { IconAlert, IconMoon, IconSun } from "../components/icons";
+import { IconAlert, IconEye, IconEyeOff, IconMoon, IconSun } from "../components/icons";
 import { api } from "../lib/api";
 import { useTheme } from "../lib/theme";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [show, setShow] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const { resolved, cycle } = useTheme();
@@ -30,24 +31,23 @@ export default function Login() {
   return (
     <div className="auth">
       <button
-        className="btn btn-ghost btn-icon"
+        className="btn btn-ghost btn-icon auth-theme"
         onClick={cycle}
         aria-label={resolved === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-        style={{ position: "fixed", top: 16, right: 16 }}
       >
         {resolved === "dark" ? <IconSun /> : <IconMoon />}
       </button>
 
       <form className="auth-card" onSubmit={submit}>
-        <div className="brand" style={{ marginBottom: 22 }}>
+        <div className="auth-head">
           <span className="mark">NM</span>
-          <span>
-            <span className="name">Neo Minutes</span>
-            <span className="sub">Transcripts &amp; minutes</span>
-          </span>
+          <h1>
+            Neo <b>Minutes</b>
+          </h1>
+          <p>Meeting transcripts and minutes, written for you.</p>
         </div>
 
-        <div className="stack" style={{ gap: 12 }}>
+        <div className="stack" style={{ gap: 14 }}>
           <label className="field">
             <span>Email</span>
             <input
@@ -56,6 +56,9 @@ export default function Login() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              inputMode="email"
               autoFocus
               required
             />
@@ -63,14 +66,26 @@ export default function Login() {
 
           <label className="field">
             <span>Password</span>
-            <input
-              type="password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
+            <span className="input-affix">
+              <input
+                type={show ? "text" : "password"}
+                placeholder="Your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+              />
+              <button
+                type="button"
+                className="affix-btn"
+                onClick={() => setShow((v) => !v)}
+                aria-label={show ? "Hide password" : "Show password"}
+                aria-pressed={show}
+                title={show ? "Hide password" : "Show password"}
+              >
+                {show ? <IconEyeOff size={17} /> : <IconEye size={17} />}
+              </button>
+            </span>
           </label>
 
           {error && (
@@ -80,10 +95,12 @@ export default function Login() {
             </div>
           )}
 
-          <button className="btn btn-primary btn-block" type="submit" disabled={busy}>
+          <button className="btn btn-primary btn-block auth-submit" type="submit" disabled={busy}>
             {busy ? "Signing in…" : "Sign in"}
           </button>
         </div>
+
+        <p className="auth-foot">Ask an administrator if you need an account.</p>
       </form>
     </div>
   );
