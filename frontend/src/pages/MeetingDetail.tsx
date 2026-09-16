@@ -103,6 +103,11 @@ export default function MeetingDetail() {
   const [ready, setReady] = useState<TranscriptLanguage[]>([]);
   const [translating, setTranslating] = useState<TranscriptLanguage | null>(null);
 
+  // A few seconds of each voice, so a listener can put a name to it.
+  const [samples, setSamples] = useState<Record<string, string>>({});
+  const [playingSpeaker, setPlayingSpeaker] = useState<string | null>(null);
+  const player = useRef<HTMLAudioElement | null>(null);
+
   const load = useCallback(async () => {
     try {
       const detail = await api.getMeeting(id);
@@ -244,6 +249,48 @@ export default function MeetingDetail() {
       switchKind(target);
       setRunningKind(target);
     }
+  }
+
+  useEffect(() => {
+    if (!meeting?.has_recording) return;
+    let cancelled = false;
+    api
+      .speakerSamples(id)
+      .then((r) => !cancelled && setSamples(r.samples))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [id, meeting?.has_recording, meeting?.segments.length]);
+
+  // One player for the whole list: starting a second voice stops the first.
+  useEffect(() => {
+    const audio = new Audio();
+    audio.onended = () => setPlayingSpeaker(null);
+    audio.onerror = () => setPlayingSpeaker(null);
+    player.current = audio;
+    return () => {
+      audio.pause();
+      player.current = null;
+    };
+  }, []);
+
+  function playSample(label: string) {
+    const audio = player.current;
+    const url = samples[label];
+    if (!audio || !url) return;
+    if (playingSpeaker === label) {
+      audio.pause();
+      setPlayingSpeaker(null);
+      return;
+    }
+    audio.pause();
+    audio.src = url.startsWith("http") ? url : API_BASE + url;
+    audio.currentTime = 0;
+    audio
+      .play()
+      .then(() => setPlayingSpeaker(label))
+      .catch(() => setError("Could not play this voice sample"));
   }
 
   async function relabel(speakerLabel: string, userId: string) {
@@ -604,7 +651,7 @@ export default function MeetingDetail() {
         />
       )}
 
-      {(audioSrc || speakers.length > 0) && (
+      {(audioSrc || meeting.audio_deleted_at) && (
         <div className="media-strip">
           {meeting.audio_deleted_at ? (
             <span className="small dim">
@@ -625,49 +672,61 @@ export default function MeetingDetail() {
               <audio controls src={audioSrc} className="audio-inline" onError={() => setAudioFailed(true)} />
             ))
           )}
-          {speakers.length > 0 && !canRelabel && (
-            <div className="chips">
-              {speakers.map((p) => (
-                <span key={p.speaker_label} className="chip" title={p.user_id ? `Match ${p.confidence.toFixed(2)}` : "Not identified"}>
-                  <strong>{p.display_name}</strong>
-                  <span className="dim">{formatDuration(p.speaking_seconds)}</span>
-                </span>
-              ))}
-            </div>
-          )}
+
         </div>
       )}
 
-      {canRelabel && speakers.length > 0 && (
+      {speakers.length > 0 && (
         <div className="card">
-          <div className="table-wrap">
-            <table className="table-compact">
-              <tbody>
-                {speakers.map((p) => (
-                  <tr key={p.speaker_label}>
-                    <td data-label="Speaker">
-                      <strong>{p.display_name}</strong>{" "}
-                      <span className="dim small">{formatDuration(p.speaking_seconds)}</span>
-                    </td>
-                    <td data-label="Assign" style={{ width: 240 }}>
-                      <select
-                        value={p.user_id ?? ""}
-                        disabled={busy}
-                        onChange={(e) => relabel(p.speaker_label, e.target.value)}
-                      >
-                        <option value="">Unidentified</option>
-                        {users.map((u) => (
-                          <option key={u.id} value={u.id}>
-                            {u.full_name}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="card-head card-head-tight">
+            <h3>Speakers</h3>
+            <span className="dim tiny">
+              {canRelabel
+                ? "Listen, then put a name to each voice — the name sticks and future meetings recognise it"
+                : `${speakers.length} detected`}
+            </span>
           </div>
+          <ul className="speaker-list">
+            {speakers.map((p) => {
+              const sample = samples[p.speaker_label];
+              const playing = playingSpeaker === p.speaker_label;
+              return (
+                <li key={p.speaker_label} className="speaker-row">
+                  <button
+                    className={`btn btn-sm btn-icon play-btn ${playing ? "is-playing" : ""}`}
+                    onClick={() => playSample(p.speaker_label)}
+                    disabled={!sample}
+                    aria-label={playing ? `Stop ${p.display_name}` : `Play a sample of ${p.display_name}`}
+                    title={sample ? "Play a few seconds of this voice" : "No recording available"}
+                  >
+                    {playing ? <IconPause size={14} /> : <IconPlay size={14} />}
+                  </button>
+                  <span className="speaker-name">
+                    <strong>{p.display_name}</strong>
+                    <span className="dim tiny">
+                      {formatDuration(p.speaking_seconds)}
+                      {p.is_manual ? " · confirmed" : p.user_id ? ` · matched ${p.confidence.toFixed(2)}` : ""}
+                    </span>
+                  </span>
+                  {canRelabel && (
+                    <select
+                      value={p.user_id ?? ""}
+                      disabled={busy}
+                      onChange={(e) => relabel(p.speaker_label, e.target.value)}
+                      aria-label={`Who is ${p.display_name}?`}
+                    >
+                      <option value="">Not named</option>
+                      {users.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.full_name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
 

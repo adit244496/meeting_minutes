@@ -40,6 +40,17 @@ TOGGLES: tuple[Toggle, ...] = (
         ),
     ),
     Toggle(
+        key="speaker_matching_enabled",
+        default=False,
+        label="Recognise people by voice",
+        description=(
+            "Matches each speaker in a new meeting against the voices already "
+            "enrolled, so returning colleagues are named automatically. Every "
+            "correction teaches it that voice. Needs the speaker-identification "
+            "packages installed - see DEPLOYMENT."
+        ),
+    ),
+    Toggle(
         key="speaker_relabel_enabled",
         default=False,
         label="Let people correct speaker names",

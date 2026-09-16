@@ -369,6 +369,10 @@ export const api = {
   liveStart: (id: string) => request<{ live: boolean }>(`/api/meetings/${id}/live/start`, { method: "POST" }),
   /** Save a live recording from the server's copy, when the recording tab is gone. */
   liveFinish: (id: string) => request<Meeting>(`/api/meetings/${id}/live/finish`, { method: "POST" }),
+  /** A short playable clip per speaker, so a voice can be recognised and named. */
+  speakerSamples: (id: string) =>
+    request<{ samples: Record<string, string>; reason?: string }>(`/api/meetings/${id}/speakers/samples`),
+
   /** Languages this transcript has been translated into, and any job running. */
   listTranslations: (id: string) =>
     request<{ languages: TranscriptLanguage[]; in_progress: boolean; message: string | null }>(

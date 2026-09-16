@@ -106,6 +106,42 @@ def to_opus(src: Path, dest: Path, bitrate: str = "32k") -> Path:
     return dest
 
 
+def extract_sample(src: Path, dest: Path, spans: list[tuple[float, float]]) -> Path:
+    """Stitch a few spans of one speaker into a short clip you can play.
+
+    Several short spans beat one long one for recognising a voice: a single
+    stretch can be one unusual sentence, while a few give the listener the
+    speaker's normal range. AAC in MP4 because every browser plays it - Opus in
+    WebM does not play in Safari at all.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not spans:
+        raise ValueError("no spans to sample")
+
+    trims = []
+    labels = []
+    for i, (start, end) in enumerate(spans):
+        trims.append(f"[0:a]atrim=start={max(0.0, start):.3f}:end={max(0.0, end):.3f},asetpts=N/SR/TB[s{i}]")
+        labels.append(f"[s{i}]")
+    graph = "; ".join(trims) + f"; {''.join(labels)}concat=n={len(spans)}:v=0:a=1[out]"
+
+    subprocess.run(
+        [
+            _ffmpeg(), "-nostdin", "-y",
+            "-i", str(src),
+            "-filter_complex", graph,
+            "-map", "[out]",
+            "-ac", "1",
+            "-ar", "16000",
+            "-c:a", "aac", "-b:a", "64k",
+            str(dest),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return dest
+
+
 def duration_seconds(path: Path) -> float:
     out = subprocess.run(
         [

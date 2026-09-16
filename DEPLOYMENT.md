@@ -231,6 +231,51 @@ plain HTTP, so live transcription only works once this step is done.
 
 ---
 
+## Recognising people by voice
+
+Every meeting page plays a few seconds of each speaker, cut from the recording,
+so somebody can listen and put a name to the voice. Naming a speaker also
+*teaches* the system that voice, and later meetings match against what it has
+learnt. Nothing is shared between installations - the voiceprints are rows in
+your own database.
+
+How it learns:
+
+1. Someone names a speaker on a finished meeting (**Speakers**, pick a person).
+2. That correction is saved as `is_manual`, so reprocessing never overwrites it,
+   and the speaker's audio from that meeting is embedded into a **voiceprint**
+   for that person - about 30 seconds of pooled speech, stored as 192 numbers,
+   not audio.
+3. In later meetings each diarized speaker is embedded the same way and compared
+   against every enrolled voiceprint. The best match above
+   `SPEAKER_MATCH_THRESHOLD` (0.35 by default) wins, one person per speaker.
+   Below it, the speaker stays "Speaker 2" rather than guessing.
+4. Each correction adds another voiceprint for that person, so recognition
+   improves with use. An admin can also upload samples up front under
+   **Settings > People**.
+
+It is off until three things are true:
+
+```bash
+# 1. The packages: ~2GB, CPU-only torch. Native install only - the Docker image
+#    takes --build-arg WITH_SPEAKER_ID=true instead.
+cd ~/meeting_minutes/meeting_minutes/backend
+venv/bin/pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+venv/bin/pip install -r requirements-speaker.txt
+sudo systemctl restart meeting_minutes meeting_minutes_worker
+```
+
+2. **Settings > Features > Recognise people by voice** - on.
+3. **Settings > Features > Let people correct speaker names** - on, so there is
+   a way to teach it in the first place. (**Voice enrollment** adds the
+   upload-samples path for admins.)
+
+The first meeting after enabling downloads a ~20MB model. Tune
+`SPEAKER_MATCH_THRESHOLD` on your own audio: too many wrong names, raise it; too
+many unknowns, lower it. A confident wrong name is worse than an honest unknown.
+
+---
+
 ## Testing it
 
 ### A throwaway test recording

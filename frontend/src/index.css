@@ -1744,3 +1744,19 @@ body { background: var(--bg); }
   .tabbar > .row { width: 100%; justify-content: space-between; }
   .tabbar .segmented-sm { overflow-x: auto; }
 }
+
+/* ---------- speakers with a voice sample ---------- */
+.speaker-list { list-style: none; margin: 0; padding: 4px 6px 6px; display: grid; gap: 2px; }
+.speaker-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 230px);
+  align-items: center; gap: 10px; padding: 6px 8px; border-radius: var(--r-md);
+}
+.speaker-row:hover { background: var(--surface-2); }
+.speaker-name { display: flex; flex-direction: column; min-width: 0; }
+.speaker-name strong { font-size: 0.92rem; }
+.play-btn { width: 34px; min-height: 34px; border-radius: 50%; flex: none; }
+.play-btn.is-playing { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+@media (max-width: 620px) {
+  .speaker-row { grid-template-columns: auto minmax(0, 1fr); }
+  .speaker-row select { grid-column: 1 / -1; }
+}

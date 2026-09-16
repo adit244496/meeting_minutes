@@ -32,7 +32,7 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import credentials, progress, storage, transcripts
+from app import credentials, features, progress, storage, transcripts
 from app.asr import get_provider
 from app.asr.base import ProviderBusyError
 from app.audio import duration_seconds, to_wav16k_mono
@@ -150,7 +150,9 @@ def process_meeting(
             # [3] Speaker identification (optional) ------------------------
             # Off by default: get the transcript right first. Turn on with
             # AUTO_IDENTIFY_SPEAKERS once people have enrolled voice samples.
-            if settings.auto_identify_speakers:
+            # An admin can turn matching on from Settings without a redeploy;
+            # AUTO_IDENTIFY_SPEAKERS in the environment still forces it on.
+            if settings.auto_identify_speakers or features.is_enabled(db, "speaker_matching_enabled"):
                 progress.publish(mid, "speakers", 89, "Matching voices against enrolled users")
                 enrolled = load_enrolled_voices(db)
                 resolutions = identify_speakers(wav, result.segments, enrolled)
