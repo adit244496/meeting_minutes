@@ -19,6 +19,7 @@ from typing import Callable, Literal
 import anthropic
 from pydantic import BaseModel, Field
 
+from app import credentials
 from app.config import settings
 
 log = logging.getLogger(__name__)
@@ -451,17 +452,20 @@ def _generate_openai(
         stream=True,
     )
     response = None
-    with _Tracker(report, "OpenAI") as tracker:
-        # Streamed purely for progress; the result is identical to a plain call.
-        stream = client.responses.create(**request)
-        for event in stream:
-            kind = getattr(event, "type", "")
-            if kind == "response.output_text.delta":
-                tracker.on_text(event.delta)
-            elif kind.startswith("response.reasoning"):
-                tracker.on_thinking()
-            elif kind in ("response.completed", "response.incomplete", "response.failed"):
-                response = event.response
+    try:
+        with _Tracker(report, "OpenAI") as tracker:
+            # Streamed purely for progress; the result is identical to a plain call.
+            stream = client.responses.create(**request)
+            for event in stream:
+                kind = getattr(event, "type", "")
+                if kind == "response.output_text.delta":
+                    tracker.on_text(event.delta)
+                elif kind.startswith("response.reasoning"):
+                    tracker.on_thinking()
+                elif kind in ("response.completed", "response.incomplete", "response.failed"):
+                    response = event.response
+    except openai.AuthenticationError as exc:
+        raise credentials.rejected("OpenAI", "openai_api_key", api_key) from exc
 
     if response is None:
         raise RuntimeError("OpenAI closed the stream without a final response")
@@ -503,26 +507,29 @@ def _generate_anthropic(
     supports_adaptive = model.startswith(("claude-opus-5", "claude-sonnet-5"))
     extra = {"thinking": {"type": "adaptive"}} if think and supports_adaptive else {}
 
-    with _Tracker(report, "Claude") as tracker:
-        # Streamed purely for progress; the parsed result is identical to
-        # messages.parse.
-        with client.messages.stream(
-            model=model,
-            max_tokens=max_tokens,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-            output_format=MeetingMinutes,
-            **extra,
-        ) as stream:
-            for event in stream:
-                if getattr(event, "type", "") != "content_block_delta":
-                    continue
-                delta = event.delta
-                if delta.type == "thinking_delta":
-                    tracker.on_thinking()
-                elif delta.type == "text_delta":
-                    tracker.on_text(delta.text)
-            response = stream.get_final_message()
+    try:
+        with _Tracker(report, "Claude") as tracker:
+            # Streamed purely for progress; the parsed result is identical to
+            # messages.parse.
+            with client.messages.stream(
+                model=model,
+                max_tokens=max_tokens,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}],
+                output_format=MeetingMinutes,
+                **extra,
+            ) as stream:
+                for event in stream:
+                    if getattr(event, "type", "") != "content_block_delta":
+                        continue
+                    delta = event.delta
+                    if delta.type == "thinking_delta":
+                        tracker.on_thinking()
+                    elif delta.type == "text_delta":
+                        tracker.on_text(delta.text)
+                response = stream.get_final_message()
+    except anthropic.AuthenticationError as exc:
+        raise credentials.rejected("Anthropic", "anthropic_api_key", api_key) from exc
 
     minutes = response.parsed_output
     report(1.0, "Minutes written")

@@ -211,7 +211,10 @@ def _openai(system: str, body: str, model: str, api_key: str) -> str:
     import openai
 
     client = openai.OpenAI(api_key=api_key)
-    response = client.responses.create(model=model, instructions=system, input=body)
+    try:
+        response = client.responses.create(model=model, instructions=system, input=body)
+    except openai.AuthenticationError as exc:
+        raise credentials.rejected("OpenAI", "openai_api_key", api_key) from exc
     return response.output_text or ""
 
 
@@ -224,10 +227,13 @@ def _anthropic(system: str, body: str, model: str, api_key: str) -> str:
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model=model,
-        max_tokens=8000,
-        system=system,
-        messages=[{"role": "user", "content": body}],
-    )
+    try:
+        message = client.messages.create(
+            model=model,
+            max_tokens=8000,
+            system=system,
+            messages=[{"role": "user", "content": body}],
+        )
+    except anthropic.AuthenticationError as exc:
+        raise credentials.rejected("Anthropic", "anthropic_api_key", api_key) from exc
     return "".join(block.text for block in message.content if getattr(block, "type", "") == "text")

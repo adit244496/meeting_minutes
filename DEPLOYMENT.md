@@ -371,6 +371,9 @@ pg_dump -Fc meeting_minutes > meeting_minutes_$(date +%F).dump
 | `ModuleNotFoundError: No module named 'psycopg2'` | `DATABASE_URL` scheme — needs `postgresql+psycopg://`. Now auto-corrected, so this means an old checkout |
 | `Temporary failure in name resolution` for `db` or `redis` | Docker container hostnames left in `.env`. Native uses `127.0.0.1` |
 | Meetings reach `transcribed` then fail | `ANTHROPIC_API_KEY` empty while `AUTO_GENERATE_MINUTES=true` |
+| `authentication_error` / `API key is invalid` from a provider | Run `venv/bin/python scripts/check_keys.py`. It shows which provider each job uses, where each key comes from (database or `.env`), and tries a live call against each — without printing a key |
+| A key that is correct in `.env` is still rejected | Surrounding quotes or a trailing space become part of the key. `check_keys.py` flags both |
+| A key saved in the admin panel stops working after a config change | `SECRET_KEY` was rotated; stored keys are encrypted with it. Re-enter the key under Settings > AI providers. The worker log says so explicitly |
 | 502 from nginx, but `systemctl` says running | uvicorn's master survives children that crash at import. Run `scripts/smoke_import.py` for the real error |
 | `ERR_TOO_MANY_REDIRECTS` on an API call | An nginx `location` ending in `/` does not match the bare path and 301s to add the slash, while the app 307s to strip it. Use one `location /api/` |
 | Record button disabled, "needs a secure connection" | Browsers only expose the microphone over HTTPS. Upload files until certbot has run |

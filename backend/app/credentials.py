@@ -257,6 +257,33 @@ def _decode(stored: str, key: str) -> str:
         return ""
 
 
+def rejected(provider_name: str, key: str, value: str) -> RuntimeError:
+    """The provider answered 401: a key is configured, and it is not accepted.
+
+    Worth its own message. The SDK's "API key is invalid" says nothing about
+    *which* key of the several this app holds, where that key came from, or
+    where to change it - and the answer differs depending on whether it was
+    typed into the admin panel or set in .env.
+    """
+    credential = BY_KEY.get(key)
+    env_var = credential.env_var if credential else key.upper()
+    hint = ""
+    if value != value.strip():
+        hint = " The stored value has whitespace around it, which is usually the cause."
+    elif len(value) >= 2 and value[0] in "\"'" and value[-1] == value[0]:
+        hint = (
+            " The stored value still has its surrounding quotes, which are part of "
+            "the key as far as the provider is concerned - remove them from .env."
+        )
+    return RuntimeError(
+        # The mask is of the trimmed value: a newline inside it would break the
+        # message across lines, and the hint above already names that problem.
+        f"{provider_name} rejected the API key ({mask(value.strip())}, {len(value)} characters). "
+        f"Replace it under Settings > AI providers, or fix {env_var} in .env and "
+        f"restart both services.{hint}"
+    )
+
+
 def mask(value: str) -> str:
     """Enough to recognise a key by, not enough to use."""
     if not value:
