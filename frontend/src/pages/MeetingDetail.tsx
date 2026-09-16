@@ -912,9 +912,14 @@ export default function MeetingDetail() {
                 English tab and clicking Download means the English one. */}
             <MenuGroup
               title={
-                lang === "original"
-                  ? "Original, as spoken"
-                  : `In ${TRANSCRIPT_LANGUAGES.find(([c]) => c === lang)?.[1]}`
+                langParam
+                  ? `In ${TRANSCRIPT_LANGUAGES.find(([c]) => c === lang)?.[1]}`
+                  : lang === "original"
+                    ? "Original, as spoken"
+                    : // On a language tab with nothing translated yet. The page
+                      // is showing the original, and so is the download - say so
+                      // rather than promise a language that does not exist.
+                      `Original — not translated into ${TRANSCRIPT_LANGUAGES.find(([c]) => c === lang)?.[1]} yet`
               }
             >
               <MenuItem onClick={() => download(`transcript?fmt=docx${langParam}`, "transcript.docx")}>
@@ -930,7 +935,7 @@ export default function MeetingDetail() {
                 Data (.json)
               </MenuItem>
             </MenuGroup>
-            {lang !== "original" && (
+            {langParam && (
               <MenuGroup title="Original, as spoken">
                 <MenuItem onClick={() => download("transcript?fmt=docx", "transcript.docx")}>
                   Word (.docx)
