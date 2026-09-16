@@ -19,14 +19,21 @@ TARGET_SAMPLE_RATE = 16_000
 def _ffmpeg() -> str:
     exe = shutil.which("ffmpeg")
     if not exe:
-        raise RuntimeError("ffmpeg not found on PATH - it ships in the backend image")
+        raise RuntimeError(
+            "ffmpeg not found on PATH. Every meeting is transcoded before transcription, "
+            "so install it on the server:  sudo apt install -y ffmpeg  "
+            "(the Docker image already ships it), then restart the API and the worker."
+        )
     return exe
 
 
 def _ffprobe() -> str:
     exe = shutil.which("ffprobe")
     if not exe:
-        raise RuntimeError("ffprobe not found on PATH - it ships in the backend image")
+        raise RuntimeError(
+            "ffprobe not found on PATH. It comes with ffmpeg:  sudo apt install -y ffmpeg  "
+            "(the Docker image already ships it), then restart the API and the worker."
+        )
     return exe
 
 
