@@ -1,4 +1,4 @@
-# systemd unit for the Meeting Minutes API.
+# systemd unit for the Neo Minutes API.
 #
 #   sudo cp meeting_minutes.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
@@ -13,7 +13,7 @@
 # worker - see meeting_minutes_worker.service. Both must be running.
 
 [Unit]
-Description=Meeting Minutes API (FastAPI)
+Description=Neo Minutes API (FastAPI)
 After=network.target postgresql.service redis-server.service
 Wants=postgresql.service redis-server.service
 

@@ -14,8 +14,10 @@ from app import storage
 from app.api import (
     auth,
     downloads,
+    live as live_api,
     meetings,
     minutes,
+    series,
     settings as settings_api,
     users,
 )
@@ -85,21 +87,85 @@ def _ensure_columns() -> None:
     involved than adding a nullable column (renames, backfills, type changes)
     needs Alembic - see README "Before production".
     """
-    statements = [
-        "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS transcript_deleted_at TIMESTAMPTZ",
-        "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS minutes_deleted_at TIMESTAMPTZ",
-        "ALTER TABLE segments ADD COLUMN IF NOT EXISTS scripts VARCHAR(32)",
-        "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1",
-        "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'generated'",
-        "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ",
-        "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS edited_by UUID",
-        # Was VARCHAR(255), which fits a toggle but not an encrypted API key.
-        # Widening is safe to repeat and never truncates.
-        "ALTER TABLE app_settings ALTER COLUMN value TYPE TEXT",
+    # (table, column, DDL). Checked against information_schema first and only
+    # run when missing: even a no-op ALTER TABLE takes an ACCESS EXCLUSIVE lock,
+    # and doing that on every boot deadlocked against a worker mid-meeting.
+    migrations = [
+        ("meetings", "transcript_deleted_at",
+         "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS transcript_deleted_at TIMESTAMPTZ"),
+        ("meetings", "minutes_deleted_at",
+         "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS minutes_deleted_at TIMESTAMPTZ"),
+        ("segments", "scripts",
+         "ALTER TABLE segments ADD COLUMN IF NOT EXISTS scripts VARCHAR(32)"),
+        ("minutes", "version",
+         "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1"),
+        ("minutes", "source",
+         "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'generated'"),
+        ("minutes", "edited_at",
+         "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ"),
+        ("minutes", "edited_by",
+         "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS edited_by UUID"),
+        # Live transcription while recording.
+        ("meetings", "is_live",
+         "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS is_live BOOLEAN NOT NULL DEFAULT false"),
+        ("meetings", "live_transcribed_until",
+         "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS live_transcribed_until DOUBLE PRECISION"),
+        # Recurring meetings and highlighted / follow-up sections.
+        ("meetings", "series_id",
+         "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS series_id UUID "
+         "REFERENCES meeting_series(id) ON DELETE SET NULL"),
+        ("minutes", "key_points",
+         "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS key_points JSON NOT NULL DEFAULT '[]'"),
+        ("minutes", "follow_ups",
+         "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS follow_ups JSON NOT NULL DEFAULT '[]'"),
+        ("minutes_versions", "key_points",
+         "ALTER TABLE minutes_versions ADD COLUMN IF NOT EXISTS key_points JSON NOT NULL DEFAULT '[]'"),
+        ("minutes_versions", "follow_ups",
+         "ALTER TABLE minutes_versions ADD COLUMN IF NOT EXISTS follow_ups JSON NOT NULL DEFAULT '[]'"),
     ]
-    with engine.begin() as conn:
-        for statement in statements:
-            conn.execute(text(statement))
+    with engine.connect() as conn:
+        columns = {
+            (row.table_name, row.column_name): row.data_type
+            for row in conn.execute(
+                text(
+                    "SELECT table_name, column_name, data_type FROM information_schema.columns "
+                    "WHERE table_schema = current_schema()"
+                )
+            )
+        }
+
+    pending = [ddl for table, column, ddl in migrations if (table, column) not in columns]
+    if ("meetings", "series_id") not in columns:
+        pending.append("CREATE INDEX IF NOT EXISTS ix_meetings_series_id ON meetings (series_id)")
+    # Was VARCHAR(255), which fits a toggle but not an encrypted API key.
+    if columns.get(("app_settings", "value"), "text") != "text":
+        pending.append("ALTER TABLE app_settings ALTER COLUMN value TYPE TEXT")
+
+    # Short and detailed minutes: one row per (meeting, kind) instead of one per
+    # meeting. Existing minutes were written with the full prompt, so they
+    # become "detailed".
+    # Each group runs in one transaction, so a multi-step change is all or nothing.
+    groups: list[list[str]] = [[ddl] for ddl in pending]
+    if ("minutes", "kind") not in columns:
+        groups.append([
+            "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'detailed'",
+            "ALTER TABLE minutes_versions ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'detailed'",
+            "DROP INDEX IF EXISTS ix_minutes_meeting_id",
+            "CREATE INDEX IF NOT EXISTS ix_minutes_meeting_id ON minutes (meeting_id)",
+            "ALTER TABLE minutes ADD CONSTRAINT uq_minutes_meeting_kind UNIQUE (meeting_id, kind)",
+            "ALTER TABLE minutes_versions DROP CONSTRAINT IF EXISTS minutes_versions_meeting_id_version_key",
+            "ALTER TABLE minutes_versions ADD CONSTRAINT uq_minutes_versions_meeting_kind_version "
+            "UNIQUE (meeting_id, kind, version)",
+        ])
+
+    for group in groups:
+        # Give up quickly rather than queue behind a long-running job while
+        # blocking everything else on that table.
+        with engine.begin() as conn:
+            conn.execute(text("SET LOCAL lock_timeout = '10s'"))
+            for ddl in group:
+                conn.execute(text(ddl))
+        log.info("Schema updated: %s", "; ".join(group))
 
 
 def bootstrap() -> None:
@@ -144,10 +210,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Neo Minutes",
-    description=(
-        "Multilingual (English / Hindi / Bengali) meeting transcription with "
-        "speaker identification and automatic minutes."
-    ),
+    description="Meeting transcription with speaker identification and automatic minutes.",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -168,6 +231,9 @@ app.include_router(meetings.router)
 app.include_router(minutes.router)
 app.include_router(settings_api.router)
 app.include_router(downloads.router)
+app.include_router(downloads.export_router)
+app.include_router(series.router)
+app.include_router(live_api.router)
 
 
 @app.get("/health", tags=["health"])
@@ -175,7 +241,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "asr_provider": settings.asr_provider,
-        "minutes_model": settings.anthropic_model,
+        "minutes_provider": settings.minutes_provider,
     }
 
 

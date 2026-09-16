@@ -28,6 +28,8 @@ CONTENT_FIELDS = (
     "action_items",
     "open_questions",
     "languages_detected",
+    "key_points",
+    "follow_ups",
 )
 
 
@@ -35,10 +37,11 @@ def content_of(minutes: Minutes | MinutesVersion) -> dict:
     return {field: getattr(minutes, field) for field in CONTENT_FIELDS}
 
 
-def next_version(db: Session, meeting_id: uuid.UUID) -> int:
+def next_version(db: Session, meeting_id: uuid.UUID, kind: str) -> int:
+    """Versions count separately for short and detailed minutes."""
     highest = db.execute(
         select(func.max(MinutesVersion.version)).where(
-            MinutesVersion.meeting_id == meeting_id
+            MinutesVersion.meeting_id == meeting_id, MinutesVersion.kind == kind
         )
     ).scalar()
     return (highest or 0) + 1
@@ -58,6 +61,7 @@ def record(
     """
     version = MinutesVersion(
         meeting_id=meeting_id,
+        kind=minutes.kind,
         version=minutes.version,
         model=minutes.model,
         source=source,
@@ -69,11 +73,11 @@ def record(
     return version
 
 
-def list_versions(db: Session, meeting_id: uuid.UUID) -> list[MinutesVersion]:
+def list_versions(db: Session, meeting_id: uuid.UUID, kind: str) -> list[MinutesVersion]:
     return list(
         db.execute(
             select(MinutesVersion)
-            .where(MinutesVersion.meeting_id == meeting_id)
+            .where(MinutesVersion.meeting_id == meeting_id, MinutesVersion.kind == kind)
             .order_by(MinutesVersion.version.desc())
         ).scalars()
     )
@@ -94,7 +98,7 @@ def apply_edit(
         if field in CONTENT_FIELDS and value is not None:
             setattr(minutes, field, value)
 
-    minutes.version = next_version(db, minutes.meeting_id)
+    minutes.version = next_version(db, minutes.meeting_id, minutes.kind)
     minutes.source = "edited"
     minutes.edited_at = datetime.now(timezone.utc)
     minutes.edited_by = user_id
@@ -119,7 +123,7 @@ def restore(
     for field, value in content_of(version).items():
         setattr(minutes, field, value)
 
-    minutes.version = next_version(db, minutes.meeting_id)
+    minutes.version = next_version(db, minutes.meeting_id, minutes.kind)
     minutes.source = "restored"
     minutes.edited_at = datetime.now(timezone.utc)
     minutes.edited_by = user_id

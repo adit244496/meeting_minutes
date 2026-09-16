@@ -14,7 +14,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
+
+# Called with (fraction of the transcription stage done, 0..1, human message).
+ProgressFn = Callable[[float, str], None]
+
+
+class ProviderBusyError(RuntimeError):
+    """The provider is overloaded or rate-limiting, not rejecting the request.
+
+    Distinct from other failures because the right response is to wait and try
+    again later - nothing about the meeting or the configuration is wrong, and
+    a busy response is not billed.
+    """
 
 # Gap between consecutive words of the same speaker that forces a new segment.
 SEGMENT_GAP_SECONDS = 0.8
@@ -59,7 +71,12 @@ class ASRResult:
 class ASRProvider(Protocol):
     name: str
 
-    def transcribe(self, audio_path: Path, language_hint: str | None = None) -> ASRResult:
+    def transcribe(
+        self,
+        audio_path: Path,
+        language_hint: str | None = None,
+        on_progress: ProgressFn | None = None,
+    ) -> ASRResult:
         """Transcribe with word timestamps and speaker diarization."""
         ...
 

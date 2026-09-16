@@ -32,7 +32,7 @@ class ElevenLabsProvider:
         if not self.api_key:
             raise RuntimeError("ELEVENLABS_API_KEY is not set")
 
-    def transcribe(self, audio_path: Path, language_hint: str | None = None) -> ASRResult:
+    def transcribe(self, audio_path: Path, language_hint: str | None = None, on_progress=None) -> ASRResult:
         data = {
             "model_id": MODEL_ID,
             "diarize": "true",

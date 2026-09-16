@@ -67,6 +67,26 @@ class MeetingCreate(BaseModel):
     # produces garbage transliteration on code-switched speech.
     language_hint: str | None = Field(default=None, max_length=16)
     asr_provider: str | None = None
+    # Part of a recurring meeting: an existing series, or a new one by name.
+    series_id: uuid.UUID | None = None
+    new_series_name: str | None = Field(default=None, max_length=255)
+
+
+class SeriesAssign(BaseModel):
+    """Move a meeting into a series, a new series, or out of any series."""
+
+    series_id: uuid.UUID | None = None
+    new_series_name: str | None = Field(default=None, max_length=255)
+    # When creating a series from a suggestion, the earlier look-alike meetings
+    # to pull in with it.
+    include_meeting_ids: list[uuid.UUID] = []
+
+
+class SeriesOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    meeting_count: int
+    last_meeting_at: datetime | None
 
 
 class ParticipantOut(ORMModel):
@@ -102,10 +122,18 @@ class MeetingOut(ORMModel):
     audio_deleted_at: datetime | None
     transcript_deleted_at: datetime | None
     minutes_deleted_at: datetime | None
+    series_id: uuid.UUID | None = None
+    series_name: str | None = None
+    is_live: bool = False
+    live_transcribed_until: float | None = None
+    has_recording: bool = False
 
 
 class MinutesOut(ORMModel):
+    kind: str = "detailed"
     summary: str
+    key_points: list = []
+    follow_ups: list = []
     topics: list
     decisions: list
     action_items: list
@@ -126,6 +154,8 @@ class MinutesUpdate(BaseModel):
     """
 
     summary: str | None = None
+    key_points: list | None = None
+    follow_ups: list | None = None
     topics: list | None = None
     decisions: list | None = None
     action_items: list | None = None
@@ -133,11 +163,16 @@ class MinutesUpdate(BaseModel):
 
 
 class MinutesVersionOut(ORMModel):
+    kind: str = "detailed"
     version: int
     source: str
     model: str
     created_at: datetime
+    # Who made this version; null for machine-generated ones.
+    created_by_name: str | None = None
     summary: str
+    key_points: list = []
+    follow_ups: list = []
     topics: list
     decisions: list
     action_items: list
@@ -148,7 +183,8 @@ class MinutesVersionOut(ORMModel):
 class MeetingDetail(MeetingOut):
     participants: list[ParticipantOut] = []
     segments: list[SegmentOut] = []
-    minutes: MinutesOut | None = None
+    # Zero, one or two entries: short and/or detailed.
+    minutes: list[MinutesOut] = []
 
 
 class RelabelRequest(BaseModel):

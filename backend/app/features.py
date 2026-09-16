@@ -29,6 +29,17 @@ class Toggle:
 
 TOGGLES: tuple[Toggle, ...] = (
     Toggle(
+        key="live_transcription_enabled",
+        default=True,
+        label="Live transcript while recording",
+        description=(
+            "Meetings recorded in the browser are transcribed in the background as "
+            "they happen, a minute or two behind. When recording stops, the whole "
+            "meeting is transcribed again for the final, consistent transcript - so "
+            "transcription costs roughly double."
+        ),
+    ),
+    Toggle(
         key="speaker_relabel_enabled",
         default=False,
         label="Let people correct speaker names",

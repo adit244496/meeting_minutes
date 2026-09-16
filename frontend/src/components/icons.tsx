@@ -162,7 +162,53 @@ export const IconRefresh = ({ size = 16, className }: Props) => (
   </svg>
 );
 
-export const IconSparkle = ({ size = 16, className }: Props) => (
+export const IconStar = ({ size = 15, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" />
+  </svg>
+);
+
+export const IconRepeat = ({ size = 15, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="M4 11V9.5A3.5 3.5 0 0 1 7.5 6H19m0 0-3-3m3 3-3 3" />
+    <path d="M20 13v1.5a3.5 3.5 0 0 1-3.5 3.5H5m0 0 3 3m-3-3 3-3" />
+  </svg>
+);
+
+export const IconPlus =({ size = 15, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+);
+
+export const IconTrash = ({ size = 15, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5" />
+  </svg>
+);
+
+export const IconClock = ({ size = 17, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 7.5V12l3 2" />
+  </svg>
+);
+
+export const IconSliders = ({ size = 17, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
+    <circle cx="15" cy="7" r="2" />
+    <circle cx="9" cy="17" r="2" />
+  </svg>
+);
+
+export const IconChevronDown = ({ size = 14, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="m6 9 6 6 6-6" />
+  </svg>
+);
+
+export const IconSparkle =({ size = 16, className }: Props) => (
   <svg {...base(size)} className={className}>
     <path d="M12 3.5 13.7 9l5.3 1.7-5.3 1.7L12 18l-1.7-5.6L5 10.7 10.3 9z" />
   </svg>

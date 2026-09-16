@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 import redis
 
@@ -32,7 +33,14 @@ def state_key(meeting_id: str) -> str:
 
 def publish(meeting_id: str, stage: str, percent: int, message: str = "") -> None:
     payload = json.dumps(
-        {"meeting_id": str(meeting_id), "stage": stage, "percent": percent, "message": message}
+        {
+            "meeting_id": str(meeting_id),
+            "stage": stage,
+            "percent": percent,
+            "message": message,
+            # Lets the API tell a live job from one whose worker died.
+            "ts": time.time(),
+        }
     )
     try:
         client = redis.Redis.from_url(settings.redis_url)
@@ -41,6 +49,14 @@ def publish(meeting_id: str, stage: str, percent: int, message: str = "") -> Non
     except redis.RedisError:
         # Progress reporting must never take down the job it is reporting on.
         log.warning("Could not publish progress for meeting %s", meeting_id, exc_info=True)
+
+
+def seconds_since_update(meeting_id: str) -> float | None:
+    """How long since the worker last reported on this meeting; None if unknown."""
+    state = last_state(meeting_id)
+    if not state or "ts" not in state:
+        return None
+    return max(0.0, time.time() - float(state["ts"]))
 
 
 def last_state(meeting_id: str) -> dict | None:

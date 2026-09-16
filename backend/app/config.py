@@ -56,14 +56,23 @@ class Settings(BaseSettings):
     # models.list() yet still 404 on generate. Empty string disables fallback.
     gemini_fallback_models: str = "gemini-3.6-flash,gemini-3.5-flash"
 
+    # Which service writes the minutes: anthropic | openai.
+    minutes_provider: str = "anthropic"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-opus-5"
+    openai_api_key: str = ""
+    openai_model: str = "gpt-5"
+    # Comma-separated model ids offered when regenerating minutes. Empty means
+    # the built-in default (GPT-4o mini and Claude Sonnet 5, whichever has a key).
+    minutes_models: str = ""
     minutes_language: str = "en"
 
     # Phase flags. Both off = transcript only, which is the right place to
     # start: it isolates ASR quality from everything built on top of it.
     auto_identify_speakers: bool = False
-    auto_generate_minutes: bool = False
+    # Automatic *short* minutes on every meeting. Detailed minutes are always
+    # on request.
+    auto_generate_minutes: bool = True
 
     speaker_match_threshold: float = 0.35
     speaker_embed_seconds: int = 30

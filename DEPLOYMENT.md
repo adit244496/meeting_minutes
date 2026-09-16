@@ -166,20 +166,40 @@ journalctl -u meeting_minutes_worker -f
 Then open **http://&lt;server-ip&gt;:8017** and sign in with `ADMIN_EMAIL` /
 `ADMIN_PASSWORD`. Upload a short recording and watch the worker log.
 
-## 9. Later: domain and TLS
+## 9. Domain and TLS — neominutes.ambujaneotia.com
 
-Only when you want a proper hostname. Until then nginx is not involved at all.
+The hostname lives in `meeting_minutes.nginx.conf` in this repo, so change it
+here and deploy, never by editing the copy under `/etc/nginx` (the next `cp`
+would overwrite it, and the repo would still claim the old name).
+
+**Before any of this:** point an A record for `neominutes.ambujaneotia.com` at
+the server's public IP, and open inbound **80** and **443** on the security
+group. Check DNS has actually propagated - certbot fails if it has not:
 
 ```bash
+dig +short neominutes.ambujaneotia.com      # must print the server's IP
+```
+
+```bash
+cd ~/meeting_minutes/meeting_minutes && git pull
 sudo cp meeting_minutes.nginx.conf /etc/nginx/sites-available/meeting_minutes
 sudo ln -s /etc/nginx/sites-available/meeting_minutes /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d mom.ambujaneotia.com
+curl -s http://neominutes.ambujaneotia.com/health    # proxy works, still plain HTTP
+sudo certbot --nginx -d neominutes.ambujaneotia.com
 ```
 
-Change `server_name` in the file first. Nothing in the app changes — nginx just
-proxies everything to 8017. Once that is working, close 8017 on the NSG so
-traffic only arrives over 443.
+certbot rewrites that file in place to add the TLS server and the http->https
+redirect; leave its edits alone. Renewal is automatic - `sudo certbot renew
+--dry-run` proves it.
+
+Nothing in the app changes: the frontend is built with an empty `VITE_API_URL`,
+so it calls whatever origin it is served from, and the API serves the frontend
+itself. No CORS entry is needed either, because browser and API share an origin.
+
+Once HTTPS works, close 8017 on the security group so traffic only arrives over
+443. **HTTPS also switches browser recording on** - microphones are blocked on
+plain HTTP, so live transcription only works once this step is done.
 
 ---
 

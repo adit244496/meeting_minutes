@@ -113,11 +113,37 @@ class Voiceprint(Base):
     user: Mapped[User] = relationship(back_populates="voiceprints")
 
 
+class MeetingSeries(Base):
+    """A recurring meeting: the weekly review, the monthly steering committee.
+
+    Grouping meetings lets the minutes of one follow up on the action items and
+    open questions of the previous one, and lets people compare them side by side.
+    """
+
+    __tablename__ = "meeting_series"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(255))
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    meetings: Mapped[list[Meeting]] = relationship(back_populates="series")
+
+
 class Meeting(Base):
     __tablename__ = "meetings"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     title: Mapped[str] = mapped_column(String(512))
+    series_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("meeting_series.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Being recorded right now, with a live transcript built as audio arrives.
+    is_live: Mapped[bool] = mapped_column(Boolean, default=False)
+    # How much of the live recording has been transcribed, in seconds.
+    live_transcribed_until: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -157,9 +183,19 @@ class Meeting(Base):
     participants: Mapped[list[Participant]] = relationship(
         back_populates="meeting", cascade="all, delete-orphan"
     )
-    minutes: Mapped[Minutes | None] = relationship(
-        back_populates="meeting", cascade="all, delete-orphan", uselist=False
+    # Up to one row per kind: "short" (automatic) and "detailed" (on request).
+    minutes: Mapped[list[Minutes]] = relationship(
+        back_populates="meeting", cascade="all, delete-orphan"
     )
+    series: Mapped[MeetingSeries | None] = relationship(back_populates="meetings")
+
+    @property
+    def series_name(self) -> str | None:
+        return self.series.name if self.series else None
+
+    @property
+    def has_recording(self) -> bool:
+        return bool(self.audio_key)
 
 
 class Participant(Base):
@@ -230,19 +266,30 @@ class AppSetting(Base):
     )
 
 
+MINUTES_KINDS = ("short", "detailed")
+
+
 class Minutes(Base):
     __tablename__ = "minutes"
+    __table_args__ = (UniqueConstraint("meeting_id", "kind", name="uq_minutes_meeting_kind"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     meeting_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("meetings.id", ondelete="CASCADE"), unique=True, index=True
+        ForeignKey("meetings.id", ondelete="CASCADE"), index=True
     )
+    # short = generated automatically for every meeting; detailed = on request.
+    kind: Mapped[str] = mapped_column(String(16), default="detailed")
     summary: Mapped[str] = mapped_column(Text)
     decisions: Mapped[list] = mapped_column(JSON, default=list)
     action_items: Mapped[list] = mapped_column(JSON, default=list)
     topics: Mapped[list] = mapped_column(JSON, default=list)
     open_questions: Mapped[list] = mapped_column(JSON, default=list)
     languages_detected: Mapped[list] = mapped_column(JSON, default=list)
+    # The 3-5 points that matter most, shown highlighted above everything else.
+    key_points: Mapped[list] = mapped_column(JSON, default=list)
+    # For a meeting in a series: what happened to the previous meeting's action
+    # items and open questions ({item, status, note}).
+    follow_ups: Mapped[list] = mapped_column(JSON, default=list)
     model: Mapped[str] = mapped_column(String(64))
     # Reserved for semantic search over history - see README "Searching history".
     embedding = mapped_column(Vector(TEXT_EMBEDDING_DIM), nullable=True)
@@ -271,12 +318,15 @@ class MinutesVersion(Base):
     """
 
     __tablename__ = "minutes_versions"
-    __table_args__ = (UniqueConstraint("meeting_id", "version"),)
+    __table_args__ = (
+        UniqueConstraint("meeting_id", "kind", "version", name="uq_minutes_versions_meeting_kind_version"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     meeting_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("meetings.id", ondelete="CASCADE"), index=True
     )
+    kind: Mapped[str] = mapped_column(String(16), default="detailed")
     version: Mapped[int] = mapped_column(Integer)
     summary: Mapped[str] = mapped_column(Text)
     decisions: Mapped[list] = mapped_column(JSON, default=list)
@@ -284,6 +334,11 @@ class MinutesVersion(Base):
     topics: Mapped[list] = mapped_column(JSON, default=list)
     open_questions: Mapped[list] = mapped_column(JSON, default=list)
     languages_detected: Mapped[list] = mapped_column(JSON, default=list)
+    # The 3-5 points that matter most, shown highlighted above everything else.
+    key_points: Mapped[list] = mapped_column(JSON, default=list)
+    # For a meeting in a series: what happened to the previous meeting's action
+    # items and open questions ({item, status, note}).
+    follow_ups: Mapped[list] = mapped_column(JSON, default=list)
     model: Mapped[str] = mapped_column(String(64))
     source: Mapped[str] = mapped_column(String(16), default="generated")
     created_by: Mapped[uuid.UUID | None] = mapped_column(

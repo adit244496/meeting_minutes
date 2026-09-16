@@ -84,12 +84,6 @@ export default function Login() {
             {busy ? "Signing in…" : "Sign in"}
           </button>
         </div>
-
-        <div className="auth-langs">
-          <span className="pill plain">English</span>
-          <span className="pill plain">हिन्दी</span>
-          <span className="pill plain">বাংলা</span>
-        </div>
       </form>
     </div>
   );

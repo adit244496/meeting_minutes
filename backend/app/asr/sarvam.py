@@ -43,7 +43,7 @@ class SarvamProvider:
         if not self.api_key:
             raise RuntimeError("SARVAM_API_KEY is not set")
 
-    def transcribe(self, audio_path: Path, language_hint: str | None = None) -> ASRResult:
+    def transcribe(self, audio_path: Path, language_hint: str | None = None, on_progress=None) -> ASRResult:
         # "unknown" asks Sarvam to auto-detect rather than forcing a language.
         code = LANGUAGE_CODES.get(language_hint or "", language_hint) or "unknown"
 

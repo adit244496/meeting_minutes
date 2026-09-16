@@ -1,17 +1,24 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   IconAlert,
   IconCheck,
+  IconClock,
+  IconClose,
   IconEye,
   IconEyeOff,
   IconKey,
+  IconPlus,
+  IconSearch,
+  IconSliders,
   IconUpload,
+  IconUsers,
 } from "../components/icons";
 import {
   api,
   type CredentialSetting,
   type FeatureToggle,
+  type MinutesModelCatalog,
   type RetentionSetting,
   type Role,
   type User,
@@ -22,110 +29,198 @@ const RECOMMENDED_SECONDS = 60;
 
 type Section = "people" | "providers" | "retention" | "features";
 
-// Four panels rather than five stacked cards: the page had grown long enough
-// that the People table sat below three screens of settings.
-const SECTIONS: { id: Section; label: string }[] = [
-  { id: "people", label: "People" },
-  { id: "providers", label: "Providers & keys" },
-  { id: "retention", label: "Data retention" },
-  { id: "features", label: "Features" },
+const SECTIONS: { id: Section; label: string; hint: string; icon: JSX.Element }[] = [
+  { id: "people", label: "People", hint: "Accounts and roles", icon: <IconUsers /> },
+  { id: "providers", label: "AI providers", hint: "API keys and models", icon: <IconKey /> },
+  { id: "retention", label: "Data retention", hint: "How long data is kept", icon: <IconClock /> },
+  { id: "features", label: "Features", hint: "Optional capabilities", icon: <IconSliders /> },
 ];
+
+const TRANSCRIPTION_PROVIDERS: Record<string, { name: string; blurb: string; keyId: string; modelId?: string }> = {
+  gemini: {
+    name: "Google Gemini",
+    blurb: "Recommended. Best with mixed-language speech and lowest cost.",
+    keyId: "gemini_api_key",
+    modelId: "gemini_model",
+  },
+  elevenlabs: {
+    name: "ElevenLabs Scribe",
+    blurb: "Dedicated speech recognition with precise word timings.",
+    keyId: "elevenlabs_api_key",
+  },
+  sarvam: {
+    name: "Sarvam AI",
+    blurb: "Speech recognition focused on Indian languages.",
+    keyId: "sarvam_api_key",
+  },
+};
+
+const MINUTES_PROVIDERS: Record<string, { name: string; blurb: string; keyId: string; modelId: string }> = {
+  anthropic: {
+    name: "Anthropic Claude",
+    blurb: "Careful, well-structured minutes from long transcripts.",
+    keyId: "anthropic_api_key",
+    modelId: "anthropic_model",
+  },
+  openai: {
+    name: "OpenAI",
+    blurb: "GPT models with strict structured output.",
+    keyId: "openai_api_key",
+    modelId: "openai_model",
+  },
+};
+
+const RETENTION_PRESETS: { days: number; label: string }[] = [
+  { days: 7, label: "7 days" },
+  { days: 14, label: "14 days" },
+  { days: 30, label: "1 month" },
+  { days: 90, label: "3 months" },
+  { days: 180, label: "6 months" },
+  { days: 365, label: "1 year" },
+  { days: 0, label: "Forever" },
+];
+
+function initials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+function describeDays(days: number) {
+  return RETENTION_PRESETS.find((p) => p.days === days)?.label ?? `${days} days`;
+}
 
 export default function Admin() {
   const [section, setSection] = useState<Section>("people");
-  const [users, setUsers] = useState<User[]>([]);
-  const [toggles, setToggles] = useState<FeatureToggle[]>([]);
-  const [retention, setRetention] = useState<RetentionSetting[]>([]);
-  const [creds, setCreds] = useState<CredentialSetting[]>([]);
-  const [form, setForm] = useState({
-    full_name: "",
-    email: "",
-    password: "",
-    role: "member" as Role,
-  });
   const [error, setError] = useState("");
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function notify(message: string) {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(""), 2400);
+  }
+
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
+
+  function fail(err: unknown, fallback: string) {
+    setError(err instanceof Error ? err.message : fallback);
+  }
+
+  const current = SECTIONS.find((s) => s.id === section)!;
+
+  return (
+    <>
+      <div className="page-head">
+        <h1>Settings</h1>
+        <p className="lead">Manage people, AI providers, data retention and optional features.</p>
+      </div>
+
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="Settings sections">
+          {SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              className="settings-nav-item"
+              aria-current={section === s.id ? "page" : undefined}
+              onClick={() => {
+                setSection(s.id);
+                setError("");
+              }}
+            >
+              {s.icon}
+              <span>
+                <span className="label">{s.label}</span>
+                <span className="hint">{s.hint}</span>
+              </span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="settings-panel">
+          <div className="section-title">
+            <h2>{current.label}</h2>
+          </div>
+
+          {error && (
+            <div className="alert alert-err" style={{ marginBottom: 16 }}>
+              <IconAlert size={16} />
+              <span className="grow">{error}</span>
+              <button className="icon-link" onClick={() => setError("")} aria-label="Dismiss">
+                <IconClose size={14} />
+              </button>
+            </div>
+          )}
+
+          {section === "people" && <PeopleSection onError={fail} notify={notify} />}
+          {section === "providers" && <ProvidersSection onError={fail} notify={notify} />}
+          {section === "retention" && <RetentionSection onError={fail} notify={notify} />}
+          {section === "features" && <FeaturesSection onError={fail} notify={notify} />}
+        </div>
+      </div>
+
+      {toast && (
+        <div className="toast" role="status">
+          <IconCheck size={15} />
+          {toast}
+        </div>
+      )}
+    </>
+  );
+}
+
+type SectionProps = {
+  onError: (err: unknown, fallback: string) => void;
+  notify: (message: string) => void;
+};
+
+// --------------------------------------------------------------------------
+// People
+// --------------------------------------------------------------------------
+
+function PeopleSection({ onError, notify }: SectionProps) {
+  const [users, setUsers] = useState<User[]>([]);
+  const [enrollmentOn, setEnrollmentOn] = useState(false);
+  const [filter, setFilter] = useState("");
+  const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [enrolling, setEnrolling] = useState<string | null>(null);
+  const [form, setForm] = useState({ full_name: "", email: "", password: "", role: "member" as Role });
   const fileInput = useRef<HTMLInputElement>(null);
-
-  // Credential editing. `drafts` holds what is being typed; the stored key is
-  // never sent to the browser, so there is nothing to prefill for a secret.
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [reveal, setReveal] = useState<Record<string, boolean>>({});
-  const [savingKey, setSavingKey] = useState<string | null>(null);
-  const [savedKey, setSavedKey] = useState<string | null>(null);
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const enrollmentOn =
-    toggles.find((t) => t.key === "voice_enrollment_enabled")?.enabled ?? false;
 
   async function refresh() {
     try {
       setUsers(await api.listUsers());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load users");
+      onError(err, "Could not load people");
     }
   }
 
   useEffect(() => {
     refresh();
-    api.listToggles().then(setToggles).catch(() => undefined);
-    api.listRetention().then(setRetention).catch(() => undefined);
-    api.listCredentials().then(setCreds).catch(() => undefined);
+    api
+      .listToggles()
+      .then((t) => setEnrollmentOn(t.find((x) => x.key === "voice_enrollment_enabled")?.enabled ?? false))
+      .catch(() => undefined);
   }, []);
 
-  useEffect(() => () => {
-    if (savedTimer.current) clearTimeout(savedTimer.current);
-  }, []);
+  const visible = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter((u) => u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
+  }, [users, filter]);
 
-  async function saveRetention(key: string, value: number) {
-    const previous = retention;
-    setRetention((prev) => prev.map((r) => (r.key === key ? { ...r, value } : r)));
-    try {
-      await api.setRetention(key, value);
-    } catch (err) {
-      setRetention(previous);
-      setError(err instanceof Error ? err.message : "Could not save retention setting");
-    }
-  }
-
-  async function flip(key: string, enabled: boolean) {
-    setToggles((prev) => prev.map((t) => (t.key === key ? { ...t, enabled } : t)));
-    try {
-      await api.setToggle(key, enabled);
-    } catch (err) {
-      // Put it back if the server refused.
-      setToggles((prev) => prev.map((t) => (t.key === key ? { ...t, enabled: !enabled } : t)));
-      setError(err instanceof Error ? err.message : "Could not update setting");
-    }
-  }
-
-  async function saveCredential(key: string, value: string) {
-    setSavingKey(key);
-    setError("");
-    try {
-      const updated = await api.setCredential(key, value);
-      setCreds((prev) => prev.map((c) => (c.key === key ? updated : c)));
-      setDrafts((prev) => {
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      });
-      setReveal((prev) => ({ ...prev, [key]: false }));
-      setSavedKey(key);
-      if (savedTimer.current) clearTimeout(savedTimer.current);
-      savedTimer.current = setTimeout(() => setSavedKey(null), 2200);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save that setting");
-    } finally {
-      setSavingKey(null);
-    }
-  }
+  const admins = users.filter((u) => u.role === "admin").length;
 
   async function createUser(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
-    setError("");
     try {
       await api.createUser({
         email: form.email.trim(),
@@ -133,10 +228,12 @@ export default function Admin() {
         password: form.password || undefined,
         role: form.role,
       });
+      notify(`${form.full_name.trim()} added`);
       setForm({ full_name: "", email: "", password: "", role: "member" });
+      setAdding(false);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create user");
+      onError(err, "Could not add that person");
     } finally {
       setBusy(false);
     }
@@ -145,12 +242,12 @@ export default function Admin() {
   async function uploadSample(file: File) {
     if (!enrolling) return;
     setBusy(true);
-    setError("");
     try {
       await api.enrollVoice(enrolling, file);
+      notify("Voice sample added");
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Enrollment failed");
+      onError(err, "Enrollment failed");
     } finally {
       setBusy(false);
       setEnrolling(null);
@@ -158,410 +255,185 @@ export default function Admin() {
     }
   }
 
-  function statusPill(c: CredentialSetting) {
-    if (c.source === "database") return <span className="pill completed">saved here</span>;
-    if (c.source === "environment") return <span className="pill transcribed">from .env</span>;
-    return <span className="pill created">not set</span>;
-  }
-
-  function note(c: CredentialSetting) {
-    if (c.source === "environment") {
-      return `Currently coming from ${c.env_var}. Saving here overrides it without a restart.`;
-    }
-    if (c.source === "database") {
-      const when = c.updated_at ? new Date(c.updated_at).toLocaleString() : "";
-      return c.secret
-        ? `Saved${when ? ` ${when}` : ""}. The stored key is never shown — type a new one to replace it, or clear it to use ${c.env_var} again.`
-        : `Saved${when ? ` ${when}` : ""}. Clear it to use ${c.env_var} again.`;
-    }
-    return `Not configured here or in ${c.env_var}.`;
-  }
-
-  const keys = creds.filter((c) => c.secret);
-  const choices = creds.filter((c) => !c.secret);
-
-  function credentialRow(c: CredentialSetting) {
-    // A secret starts blank (there is nothing to prefill); a model name or
-    // provider is not secret, so it is prefilled and editable in place.
-    const draft = drafts[c.key] ?? (c.secret ? "" : c.masked);
-    const isSelect = c.choices.length > 0;
-    const saving = savingKey === c.key;
-
-    return (
-      <div className="setting-row" key={c.key}>
-        <div className="setting-copy">
-          <span className="label">
-            {c.label}
-            {statusPill(c)}
-          </span>
-          <span className="desc">{c.description}</span>
-          <span className="env pill plain mono tiny">{c.env_var}</span>
-        </div>
-
-        <div className="setting-control">
-          <div className="key-row">
-            {isSelect ? (
-              <select
-                value={draft}
-                disabled={saving}
-                onChange={(e) => saveCredential(c.key, e.target.value)}
-              >
-                {c.choices.map((choice) => (
-                  <option key={choice} value={choice}>
-                    {choice}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                type={c.secret && !reveal[c.key] ? "password" : "text"}
-                value={draft}
-                placeholder={c.secret && c.configured ? c.masked : c.placeholder}
-                disabled={saving}
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(e) => setDrafts((prev) => ({ ...prev, [c.key]: e.target.value }))}
-              />
-            )}
-
-            {c.secret && (
-              // Reveals only what is being typed — useful for catching a
-              // truncated paste. It cannot show the stored key.
-              <button
-                className="btn btn-sm btn-icon"
-                onClick={() => setReveal((prev) => ({ ...prev, [c.key]: !prev[c.key] }))}
-                aria-label={reveal[c.key] ? "Hide what I typed" : "Show what I typed"}
-                title={reveal[c.key] ? "Hide what I typed" : "Show what I typed"}
-              >
-                {reveal[c.key] ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-              </button>
-            )}
-
-            {!isSelect && (
-              <button
-                className="btn btn-sm btn-primary"
-                onClick={() => saveCredential(c.key, draft)}
-                disabled={saving || !draft.trim() || (!c.secret && draft === c.masked)}
-              >
-                {savedKey === c.key ? <IconCheck size={14} /> : null}
-                {saving ? "Saving…" : savedKey === c.key ? "Saved" : "Save"}
-              </button>
-            )}
-
-            {c.source === "database" && (
-              <button
-                className="btn btn-sm btn-danger"
-                onClick={() => saveCredential(c.key, "")}
-                disabled={saving}
-                title={`Remove the stored value and fall back to ${c.env_var}`}
-              >
-                Clear
-              </button>
-            )}
-          </div>
-          <span className="note">{note(c)}</span>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <>
-      <div className="page-head">
-        <h1>Users &amp; settings</h1>
-        <p className="lead">
-          People, provider credentials, how long recordings and minutes are kept, and
-          which optional features are switched on.
-        </p>
+      <div className="stat-row">
+        <div className="stat">
+          <span className="stat-value">{users.length}</span>
+          <span className="stat-label">People</span>
+        </div>
+        <div className="stat">
+          <span className="stat-value">{admins}</span>
+          <span className="stat-label">Administrators</span>
+        </div>
+        <div className="stat">
+          <span className="stat-value">{users.length - admins}</span>
+          <span className="stat-label">Members</span>
+        </div>
       </div>
 
-      {error && (
-        <div className="alert alert-err" style={{ marginBottom: 16 }}>
-          <IconAlert size={16} />
-          <span>{error}</span>
-        </div>
-      )}
-
-      <div className="segmented wide" role="tablist" style={{ marginBottom: 16 }}>
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            role="tab"
-            aria-selected={section === s.id}
-            onClick={() => setSection(s.id)}
-          >
-            {s.label}
-          </button>
-        ))}
-      </div>
-
-      {section === "providers" && (
-        <>
-          <div className="card">
-            <div className="card-head">
-              <h3>API keys</h3>
-              <span className="dim tiny">
-                <IconKey size={13} /> encrypted before storing
-              </span>
-            </div>
-            <div className="card-body">
-              {keys.length === 0 ? (
-                <p className="dim small">No providers available.</p>
-              ) : (
-                keys.map(credentialRow)
-              )}
-            </div>
-            <div className="card-foot">
-              Keys are encrypted with SECRET_KEY and never sent back to the browser — the
-              panel shows only the last four characters. A key saved here takes effect on
-              the next meeting, with no restart, and overrides the same key in .env.
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-head">
-              <h3>Provider &amp; models</h3>
-            </div>
-            <div className="card-body">
-              {choices.length === 0 ? (
-                <p className="dim small">No options available.</p>
-              ) : (
-                choices.map(credentialRow)
-              )}
-            </div>
-            <div className="card-foot">
-              Changing the model affects new transcriptions only. If transcription starts
-              failing with “overloaded”, or English terms come back transliterated into
-              Devanagari or Bengali, switch the Gemini model here rather than redeploying.
-            </div>
-          </div>
-        </>
-      )}
-
-      {section === "retention" && (
+      {adding && (
         <div className="card">
           <div className="card-head">
-            <h3>Data retention</h3>
-            <span className="dim tiny">0 = keep forever</span>
+            <h3>Add a person</h3>
+            <button className="icon-link" onClick={() => setAdding(false)} aria-label="Close">
+              <IconClose size={16} />
+            </button>
           </div>
-          <div className="card-body">
-            {retention.length === 0 ? (
-              <p className="dim small">No retention settings available.</p>
-            ) : (
-              retention.map((r) => (
-                <div key={r.key} className="setting-row">
-                  <div className="setting-copy">
-                    <span className="label">{r.label}</span>
-                    <span className="desc">{r.description}</span>
-                  </div>
-                  <div className="setting-control">
-                    <span className="with-unit">
-                      <input
-                        type="number"
-                        min={r.minimum}
-                        max={r.maximum}
-                        value={r.value}
-                        onChange={(e) =>
-                          setRetention((prev) =>
-                            prev.map((x) =>
-                              x.key === r.key ? { ...x, value: Number(e.target.value) } : x,
-                            ),
-                          )
-                        }
-                        onBlur={(e) => saveRetention(r.key, Number(e.target.value))}
-                        style={{ width: 110 }}
-                      />
-                      <span className="dim small">{r.value === 0 ? "forever" : r.unit}</span>
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-          <div className="card-foot">
-            The retention job runs daily at 03:30. Each tier is independent: deleting
-            recordings keeps their transcripts, and deleting transcripts keeps the minutes.
-            Meetings themselves are never deleted — the page says what was removed and when.
-          </div>
-        </div>
-      )}
-
-      {section === "features" && (
-        <div className="card">
-          <div className="card-head">
-            <h3>Features</h3>
-          </div>
-          <div className="card-body">
-            {toggles.length === 0 ? (
-              <p className="dim small">No settings available.</p>
-            ) : (
-              toggles.map((t) => (
-                <label key={t.key} className="setting-row">
-                  <span className="setting-copy">
-                    <span className="label">{t.label}</span>
-                    <span className="desc">{t.description}</span>
-                  </span>
-                  <span className="switch">
-                    <input
-                      type="checkbox"
-                      checked={t.enabled}
-                      onChange={(e) => flip(t.key, e.target.checked)}
-                    />
-                  </span>
+          <form onSubmit={createUser}>
+            <div className="card-body">
+              <div className="form-grid cols-2">
+                <label className="field">
+                  <span>Full name</span>
+                  <input
+                    type="text"
+                    placeholder="Priya Sharma"
+                    value={form.full_name}
+                    onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+                    autoFocus
+                    required
+                  />
                 </label>
-              ))
-            )}
-          </div>
+                <label className="field">
+                  <span>Email</span>
+                  <input
+                    type="email"
+                    placeholder="priya@company.com"
+                    value={form.email}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    required
+                  />
+                </label>
+                <label className="field">
+                  <span>Password</span>
+                  <input
+                    type="password"
+                    placeholder="At least 8 characters"
+                    value={form.password}
+                    onChange={(e) => setForm({ ...form, password: e.target.value })}
+                    minLength={8}
+                  />
+                  <span className="hint">Optional. Leave blank for people who only appear in transcripts.</span>
+                </label>
+                <label className="field">
+                  <span>Role</span>
+                  <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>
+                    <option value="member">Member — can record and view meetings</option>
+                    <option value="admin">Administrator — can also change settings</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div className="card-actions">
+              <button type="button" className="btn btn-sm" onClick={() => setAdding(false)} disabled={busy}>
+                Cancel
+              </button>
+              <button className="btn btn-sm btn-primary" type="submit" disabled={busy}>
+                {busy ? "Adding…" : "Add person"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
-      {section === "people" && (
-        <>
-          <div className="card">
-            <div className="card-head">
-              <h3>Add a user</h3>
-            </div>
-            <div className="card-body">
-              <form onSubmit={createUser}>
-                <div className="form-grid cols-2">
-                  <label className="field">
-                    <span>Full name</span>
-                    <input
-                      type="text"
-                      placeholder="Priya Sharma"
-                      value={form.full_name}
-                      onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-                      required
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Email</span>
-                    <input
-                      type="email"
-                      placeholder="priya@company.com"
-                      value={form.email}
-                      onChange={(e) => setForm({ ...form, email: e.target.value })}
-                      required
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Password (optional)</span>
-                    <input
-                      type="password"
-                      placeholder="Leave blank if they will not sign in"
-                      value={form.password}
-                      onChange={(e) => setForm({ ...form, password: e.target.value })}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Role</span>
-                    <select
-                      value={form.role}
-                      onChange={(e) => setForm({ ...form, role: e.target.value as Role })}
-                    >
-                      <option value="member">Member</option>
-                      <option value="admin">Admin</option>
-                    </select>
-                  </label>
-                </div>
-                <div className="row" style={{ marginTop: 14 }}>
-                  <button className="btn btn-primary" type="submit" disabled={busy}>
-                    Add user
-                  </button>
-                  <span className="small dim">
-                    Leave the password blank for people who only need to be recognised in
-                    transcripts.
-                  </span>
-                </div>
-              </form>
-            </div>
+      <div className="card">
+        <div className="toolbar">
+          <div className="search-field">
+            <IconSearch size={15} />
+            <input
+              type="search"
+              placeholder="Search by name or email"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
           </div>
+          {!adding && (
+            <button className="btn btn-sm btn-primary" onClick={() => setAdding(true)}>
+              <IconPlus size={15} />
+              Add person
+            </button>
+          )}
+        </div>
 
-          <div className="card">
-            <div className="card-head">
-              <h3>People</h3>
-              <span className="dim tiny">{users.length}</span>
-            </div>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Role</th>
-                    {enrollmentOn && <th>Voice enrollment</th>}
-                    {enrollmentOn && <th />}
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((u) => {
-                    const seconds = u.enrolled_seconds ?? 0;
-                    const pct = Math.min(100, (seconds / RECOMMENDED_SECONDS) * 100);
-                    return (
-                      <tr key={u.id}>
-                        <td data-label="Name">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Role</th>
+                {enrollmentOn && <th>Voice profile</th>}
+                {enrollmentOn && <th aria-label="Actions" />}
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((u) => {
+                const seconds = u.enrolled_seconds ?? 0;
+                const pct = Math.min(100, (seconds / RECOMMENDED_SECONDS) * 100);
+                return (
+                  <tr key={u.id}>
+                    <td data-label="Name">
+                      <span className="person">
+                        <span className="avatar">{initials(u.full_name)}</span>
+                        <span className="person-text">
                           <strong>{u.full_name}</strong>
-                        </td>
-                        <td data-label="Email" className="dim small">
-                          {u.email}
-                        </td>
-                        <td data-label="Role">
-                          <span className="pill plain">{u.role}</span>
-                        </td>
-                        {enrollmentOn && (
-                          <td data-label="Enrollment" style={{ minWidth: 180 }}>
-                            <span style={{ display: "block", width: "100%" }}>
-                              <span
-                                className="bar"
-                                style={{ display: "block", marginBottom: 4 }}
-                              >
-                                <i style={{ width: `${pct}%` }} />
-                              </span>
-                              <span className="dim tiny mono">
-                                {u.voiceprint_count ?? 0} sample(s) · {seconds.toFixed(0)}s of{" "}
-                                {RECOMMENDED_SECONDS}s
-                              </span>
-                            </span>
-                          </td>
-                        )}
-                        {enrollmentOn && (
-                          <td data-label="">
-                            <button
-                              className="btn btn-sm"
-                              disabled={busy}
-                              onClick={() => {
-                                setEnrolling(u.id);
-                                fileInput.current?.click();
-                              }}
-                            >
-                              <IconUpload size={14} />
-                              Add sample
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })}
-                  {users.length === 0 && (
-                    <tr>
-                      <td colSpan={5}>
-                        <div className="empty">
-                          <p className="big">No users yet</p>
-                        </div>
+                          <span>{u.email}</span>
+                        </span>
+                      </span>
+                    </td>
+                    <td data-label="Role">
+                      <span className={`badge ${u.role === "admin" ? "badge-accent" : ""}`}>
+                        {u.role === "admin" ? "Administrator" : "Member"}
+                      </span>
+                    </td>
+                    {enrollmentOn && (
+                      <td data-label="Voice profile" style={{ minWidth: 180 }}>
+                        <span style={{ display: "block", width: "100%" }}>
+                          <span className="bar" style={{ display: "block", marginBottom: 4 }}>
+                            <i style={{ width: `${pct}%` }} />
+                          </span>
+                          <span className="dim tiny">
+                            {u.voiceprint_count ?? 0} sample{u.voiceprint_count === 1 ? "" : "s"} ·{" "}
+                            {seconds.toFixed(0)}s of {RECOMMENDED_SECONDS}s
+                          </span>
+                        </span>
                       </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <div className="card-foot">
-              {enrollmentOn
-                ? "Three samples of about 20 seconds each work better than one 60-second sample — they capture more of the natural variation in how somebody speaks. Use clean speech with no background chatter."
-                : "Transcripts label speakers as Speaker 1, 2, 3. Turn on voice enrollment under Features to put real names to them."}
-            </div>
-          </div>
-        </>
-      )}
+                    )}
+                    {enrollmentOn && (
+                      <td data-label="" style={{ textAlign: "right" }}>
+                        <button
+                          className="btn btn-sm"
+                          disabled={busy}
+                          onClick={() => {
+                            setEnrolling(u.id);
+                            fileInput.current?.click();
+                          }}
+                        >
+                          <IconUpload size={14} />
+                          Add sample
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+              {visible.length === 0 && (
+                <tr>
+                  <td colSpan={4}>
+                    <div className="empty">
+                      <p className="big">{filter ? "No one matches that search" : "No people yet"}</p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="card-foot">
+          {enrollmentOn
+            ? "For the best voice profile, add three clean samples of about 20 seconds each."
+            : "Speakers are labelled Speaker 1, 2, 3. Turn on voice enrollment under Features to identify people by name."}
+        </div>
+      </div>
 
       <input
         ref={fileInput}
@@ -571,5 +443,585 @@ export default function Admin() {
         onChange={(e) => e.target.files?.[0] && uploadSample(e.target.files[0])}
       />
     </>
+  );
+}
+
+// --------------------------------------------------------------------------
+// AI providers
+// --------------------------------------------------------------------------
+
+function ProvidersSection({ onError, notify }: SectionProps) {
+  const [creds, setCreds] = useState<CredentialSetting[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    api
+      .listCredentials()
+      .then(setCreds)
+      .catch((err) => onError(err, "Could not load provider settings"))
+      .finally(() => setLoaded(true));
+  }, []);
+
+  const byKey = useMemo(() => new Map(creds.map((c) => [c.key, c])), [creds]);
+
+  async function save(key: string, value: string, message: string) {
+    const updated = await api.setCredential(key, value);
+    setCreds((prev) => prev.map((c) => (c.key === key ? updated : c)));
+    notify(message);
+  }
+
+  if (!loaded) return <p className="dim small">Loading…</p>;
+
+  const asr = byKey.get("asr_provider")?.masked || "gemini";
+  const minutesProvider = byKey.get("minutes_provider")?.masked || "anthropic";
+
+  return (
+    <>
+      <ProviderGroup
+        title="Transcription"
+        description="Turns meeting audio into a timestamped transcript with speakers."
+        providers={TRANSCRIPTION_PROVIDERS}
+        selected={asr}
+        byKey={byKey}
+        onSelect={(id) =>
+          save("asr_provider", id, `Transcription now uses ${TRANSCRIPTION_PROVIDERS[id].name}`).catch((err) =>
+            onError(err, "Could not change the provider"),
+          )
+        }
+        save={save}
+        onError={onError}
+      />
+
+      <ProviderGroup
+        title="Meeting minutes"
+        description="Writes the summary, decisions and action items from the transcript."
+        providers={MINUTES_PROVIDERS}
+        selected={minutesProvider}
+        byKey={byKey}
+        onSelect={(id) =>
+          save("minutes_provider", id, `Minutes now use ${MINUTES_PROVIDERS[id].name}`).catch((err) =>
+            onError(err, "Could not change the provider"),
+          )
+        }
+        save={save}
+        onError={onError}
+      />
+
+      <RegenerationModelsCard byKey={byKey} save={save} onError={onError} />
+
+      <p className="tiny dim" style={{ marginTop: 4 }}>
+        <IconKey size={12} /> Keys are encrypted before they are stored and are never shown again — only the last
+        four characters. Changes apply to the next meeting without a restart.
+      </p>
+    </>
+  );
+}
+
+function ProviderGroup({
+  title,
+  description,
+  providers,
+  selected,
+  byKey,
+  onSelect,
+  save,
+  onError,
+}: {
+  title: string;
+  description: string;
+  providers: Record<string, { name: string; blurb: string; keyId: string; modelId?: string }>;
+  selected: string;
+  byKey: Map<string, CredentialSetting>;
+  onSelect: (id: string) => void;
+  save: (key: string, value: string, message: string) => Promise<void>;
+  onError: (err: unknown, fallback: string) => void;
+}) {
+  const active = providers[selected] ?? Object.values(providers)[0];
+  const key = byKey.get(active.keyId);
+  const model = active.modelId ? byKey.get(active.modelId) : undefined;
+
+  return (
+    <div className="card">
+      <div className="card-head card-head-lg">
+        <div>
+          <h2 className="card-title">{title}</h2>
+          <p className="card-sub">{description}</p>
+        </div>
+      </div>
+      <div className="card-body">
+        <div className="choice-grid" role="radiogroup" aria-label={`${title} provider`}>
+          {Object.entries(providers).map(([id, p]) => {
+            const configured = byKey.get(p.keyId)?.configured ?? false;
+            return (
+              <button
+                key={id}
+                role="radio"
+                aria-checked={selected === id}
+                className="choice"
+                onClick={() => selected !== id && onSelect(id)}
+              >
+                <span className="choice-head">
+                  <span className="radio-dot" />
+                  <strong>{p.name}</strong>
+                </span>
+                <span className="choice-blurb">{p.blurb}</span>
+                <span className={`status-dot ${configured ? "ok" : ""}`}>
+                  {configured ? "Key configured" : "No key"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="provider-fields">
+          {key && <SecretField setting={key} providerName={active.name} save={save} onError={onError} />}
+          {model && <ModelField setting={model} save={save} onError={onError} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function sourceBadge(c: CredentialSetting) {
+  if (c.source === "database") return <span className="badge badge-ok">Saved</span>;
+  if (c.source === "environment") return <span className="badge">From server config</span>;
+  return <span className="badge badge-warn">Not set</span>;
+}
+
+function SecretField({
+  setting,
+  providerName,
+  save,
+  onError,
+}: {
+  setting: CredentialSetting;
+  providerName: string;
+  save: (key: string, value: string, message: string) => Promise<void>;
+  onError: (err: unknown, fallback: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [reveal, setReveal] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setDraft("");
+    setReveal(false);
+  }, [setting.key]);
+
+  async function submit(value: string, message: string) {
+    setBusy(true);
+    try {
+      await save(setting.key, value, message);
+      setDraft("");
+      setReveal(false);
+    } catch (err) {
+      onError(err, "Could not save the key");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="field-block">
+      <div className="field-block-head">
+        <label htmlFor={`f-${setting.key}`}>{providerName} API key</label>
+        {sourceBadge(setting)}
+      </div>
+      <form
+        className="key-row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (draft.trim()) submit(draft, `${providerName} key saved`);
+        }}
+      >
+        <div className="input-affix">
+          <input
+            id={`f-${setting.key}`}
+            type={reveal ? "text" : "password"}
+            value={draft}
+            placeholder={setting.configured ? `Current key ${setting.masked}` : setting.placeholder}
+            disabled={busy}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <button
+            type="button"
+            className="affix-btn"
+            onClick={() => setReveal((r) => !r)}
+            aria-label={reveal ? "Hide key" : "Show key"}
+            title={reveal ? "Hide key" : "Show key"}
+          >
+            {reveal ? <IconEyeOff size={15} /> : <IconEye size={15} />}
+          </button>
+        </div>
+        <button className="btn btn-sm btn-primary" type="submit" disabled={busy || !draft.trim()}>
+          {busy ? "Saving…" : setting.configured ? "Replace" : "Save"}
+        </button>
+        {setting.source === "database" && (
+          <button
+            type="button"
+            className="btn btn-sm btn-danger"
+            disabled={busy}
+            onClick={() => submit("", `${providerName} key removed`)}
+          >
+            Remove
+          </button>
+        )}
+      </form>
+      <p className="field-help">
+        {setting.description}
+        {setting.source === "environment" && " A key saved here overrides the one in the server config."}
+        {setting.source === "database" && " Removing it falls back to the server config, if one is set there."}
+      </p>
+    </div>
+  );
+}
+
+function ModelField({
+  setting,
+  save,
+  onError,
+}: {
+  setting: CredentialSetting;
+  save: (key: string, value: string, message: string) => Promise<void>;
+  onError: (err: unknown, fallback: string) => void;
+}) {
+  const suggestions = setting.suggestions ?? [];
+  const known = (value: string) => suggestions.includes(value);
+  const [draft, setDraft] = useState(setting.masked);
+  const [custom, setCustom] = useState(Boolean(setting.masked) && !known(setting.masked));
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setDraft(setting.masked);
+    setCustom(Boolean(setting.masked) && !known(setting.masked));
+  }, [setting.key, setting.masked]);
+
+  async function commit(value: string) {
+    setBusy(true);
+    try {
+      await save(setting.key, value, `Model set to ${value}`);
+    } catch (err) {
+      onError(err, "Could not save the model");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const dirty = draft.trim() !== setting.masked;
+
+  return (
+    <div className="field-block">
+      <div className="field-block-head">
+        <label htmlFor={`f-${setting.key}`}>{setting.label}</label>
+      </div>
+      <form
+        className="key-row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (dirty && draft.trim()) commit(draft.trim());
+        }}
+      >
+        {suggestions.length > 0 && (
+          <select
+            id={`f-${setting.key}`}
+            className="mono-input"
+            value={custom ? "__custom" : draft}
+            disabled={busy}
+            onChange={(e) => {
+              if (e.target.value === "__custom") {
+                setCustom(true);
+                setDraft("");
+                return;
+              }
+              setCustom(false);
+              setDraft(e.target.value);
+              if (e.target.value !== setting.masked) commit(e.target.value);
+            }}
+          >
+            {!setting.masked && <option value="">Choose a model…</option>}
+            {suggestions.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+            <option value="__custom">Other (type a model id)…</option>
+          </select>
+        )}
+        {(custom || suggestions.length === 0) && (
+          <>
+            <input
+              id={suggestions.length ? `f-${setting.key}-custom` : `f-${setting.key}`}
+              type="text"
+              className="mono-input"
+              value={draft}
+              placeholder={setting.placeholder}
+              disabled={busy}
+              spellCheck={false}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+            <button className="btn btn-sm" type="submit" disabled={busy || !dirty || !draft.trim()}>
+              {busy ? "Saving…" : "Update"}
+            </button>
+          </>
+        )}
+      </form>
+      <p className="field-help">{setting.description} Applies to new meetings only.</p>
+    </div>
+  );
+}
+
+function RegenerationModelsCard({
+  byKey,
+  save,
+  onError,
+}: {
+  byKey: Map<string, CredentialSetting>;
+  save: (key: string, value: string, message: string) => Promise<void>;
+  onError: (err: unknown, fallback: string) => void;
+}) {
+  const [data, setData] = useState<MinutesModelCatalog | null>(null);
+  const [busy, setBusy] = useState(false);
+  const keysSignature = ["anthropic_api_key", "openai_api_key", "minutes_models"]
+    .map((k) => `${byKey.get(k)?.configured}:${byKey.get(k)?.masked}`)
+    .join("|");
+
+  useEffect(() => {
+    api
+      .minutesModelCatalog()
+      .then(setData)
+      .catch((err) => onError(err, "Could not load the model list"));
+  }, [keysSignature]);
+
+  if (!data) return null;
+
+  async function toggle(id: string, on: boolean) {
+    if (!data) return;
+    const next = data.models.filter((m) => (m.id === id ? on : m.enabled)).map((m) => m.id);
+    if (next.length === 0) {
+      onError(new Error("Keep at least one model available for regeneration"), "");
+      return;
+    }
+    setBusy(true);
+    try {
+      await save("minutes_models", next.join(","), "Regeneration models updated");
+    } catch (err) {
+      onError(err, "Could not save the model list");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const groups: [string, string][] = [
+    ["openai", "OpenAI"],
+    ["anthropic", "Anthropic Claude"],
+  ];
+
+  return (
+    <div className="card">
+      <div className="card-head card-head-lg">
+        <div>
+          <h2 className="card-title">Models for regenerating minutes</h2>
+          <p className="card-sub">
+            Members pick from these on a meeting page. A model is only offered when its provider has a key.
+            {data.using_default && " Showing the default: GPT-4o mini and Claude Sonnet 5."}
+          </p>
+        </div>
+      </div>
+      <div className="card-body model-checklist">
+        {groups.map(([provider, name]) => {
+          const models = data.models.filter((m) => m.provider === provider);
+          const hasKey = models[0]?.key_configured ?? false;
+          return (
+            <fieldset key={provider} className="model-group" disabled={busy}>
+              <legend>
+                {name}
+                <span className={`status-dot ${hasKey ? "ok" : ""}`}>{hasKey ? "Key configured" : "No key"}</span>
+              </legend>
+              {models.map((m) => (
+                <label key={m.id} className={`model-option ${m.enabled && !hasKey ? "inactive" : ""}`}>
+                  <input type="checkbox" checked={m.enabled} onChange={(e) => toggle(m.id, e.target.checked)} />
+                  <span className="grow">
+                    {m.label} <span className="mono dim tiny">{m.id}</span>
+                  </span>
+                  {m.enabled && !hasKey && <span className="tiny dim">Hidden until a key is added</span>}
+                </label>
+              ))}
+            </fieldset>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------
+// Retention
+// --------------------------------------------------------------------------
+
+const RETENTION_COPY: Record<string, { title: string; body: string }> = {
+  retention_days_recordings: {
+    title: "Recordings",
+    body: "Audio files are the largest item. Transcripts and minutes stay when a recording is deleted.",
+  },
+  retention_days_transcripts: {
+    title: "Transcripts",
+    body: "The word-by-word transcript. Minutes stay when a transcript is deleted.",
+  },
+  retention_days_minutes: {
+    title: "Meeting minutes",
+    body: "Minutes and their full edit history.",
+  },
+};
+
+function RetentionSection({ onError, notify }: SectionProps) {
+  const [items, setItems] = useState<RetentionSetting[]>([]);
+  const [custom, setCustom] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    api
+      .listRetention()
+      .then((rows) => {
+        setItems(rows);
+        setCustom(
+          Object.fromEntries(rows.map((r) => [r.key, !RETENTION_PRESETS.some((p) => p.days === r.value)])),
+        );
+      })
+      .catch((err) => onError(err, "Could not load retention settings"));
+  }, []);
+
+  async function save(key: string, value: number) {
+    const previous = items;
+    setItems((prev) => prev.map((r) => (r.key === key ? { ...r, value } : r)));
+    try {
+      await api.setRetention(key, value);
+      const title = RETENTION_COPY[key]?.title ?? "Setting";
+      notify(value === 0 ? `${title} are kept forever` : `${title} are kept for ${describeDays(value)}`);
+    } catch (err) {
+      setItems(previous);
+      onError(err, "Could not save retention setting");
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-head card-head-lg">
+        <div>
+          <h2 className="card-title">Automatic deletion</h2>
+          <p className="card-sub">
+            Choose how long each kind of data is kept. Download anything you need first — deletion runs daily at
+            03:30 and cannot be undone.
+          </p>
+        </div>
+      </div>
+      <div className="card-body">
+        {items.length === 0 && <p className="dim small">Loading…</p>}
+        {items.map((r) => {
+          const copy = RETENTION_COPY[r.key] ?? { title: r.label, body: r.description };
+          const isCustom = custom[r.key];
+          return (
+            <div key={r.key} className="setting-row">
+              <div className="setting-copy">
+                <span className="label">{copy.title}</span>
+                <span className="desc">{copy.body}</span>
+              </div>
+              <div className="setting-control">
+                <select
+                  value={isCustom ? "custom" : String(r.value)}
+                  onChange={(e) => {
+                    if (e.target.value === "custom") {
+                      setCustom((c) => ({ ...c, [r.key]: true }));
+                      return;
+                    }
+                    setCustom((c) => ({ ...c, [r.key]: false }));
+                    save(r.key, Number(e.target.value));
+                  }}
+                  aria-label={`Keep ${copy.title.toLowerCase()} for`}
+                >
+                  {RETENTION_PRESETS.map((p) => (
+                    <option key={p.days} value={p.days}>
+                      {p.days === 0 ? "Keep forever" : `Keep for ${p.label}`}
+                    </option>
+                  ))}
+                  <option value="custom">Custom…</option>
+                </select>
+                {isCustom && (
+                  <span className="with-unit">
+                    <input
+                      type="number"
+                      min={Math.max(1, r.minimum)}
+                      max={r.maximum}
+                      defaultValue={r.value || 60}
+                      onBlur={(e) => {
+                        const value = Number(e.target.value);
+                        if (value >= 1 && value !== r.value) save(r.key, value);
+                      }}
+                      onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+                      style={{ width: 110 }}
+                    />
+                    <span className="dim small">days</span>
+                  </span>
+                )}
+                <span className="note">
+                  {r.value === 0 ? "Never deleted" : `Deleted ${describeDays(r.value)} after the meeting`}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------
+// Features
+// --------------------------------------------------------------------------
+
+function FeaturesSection({ onError, notify }: SectionProps) {
+  const [toggles, setToggles] = useState<FeatureToggle[]>([]);
+
+  useEffect(() => {
+    api
+      .listToggles()
+      .then(setToggles)
+      .catch((err) => onError(err, "Could not load features"));
+  }, []);
+
+  async function flip(t: FeatureToggle, enabled: boolean) {
+    setToggles((prev) => prev.map((x) => (x.key === t.key ? { ...x, enabled } : x)));
+    try {
+      await api.setToggle(t.key, enabled);
+      notify(`${t.label} ${enabled ? "turned on" : "turned off"}`);
+    } catch (err) {
+      setToggles((prev) => prev.map((x) => (x.key === t.key ? { ...x, enabled: !enabled } : x)));
+      onError(err, "Could not update that feature");
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-body">
+        {toggles.length === 0 && <p className="dim small">Loading…</p>}
+        {toggles.map((t) => (
+          <label key={t.key} className="setting-row">
+            <span className="setting-copy">
+              <span className="label">{t.label}</span>
+              <span className="desc">{t.description}</span>
+            </span>
+            <span className="switch">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={t.enabled}
+                onChange={(e) => flip(t, e.target.checked)}
+              />
+            </span>
+          </label>
+        ))}
+      </div>
+      <div className="card-foot">Changes take effect immediately for everyone.</div>
+    </div>
   );
 }

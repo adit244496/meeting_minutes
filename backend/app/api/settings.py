@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import credentials, features
+from app.minutes import catalog
 from app.db import get_db
 from app.deps import current_user, require_admin
 from app.models import User
@@ -117,6 +118,7 @@ class CredentialOut(BaseModel):
     secret: bool
     placeholder: str
     choices: list[str]
+    suggestions: list[str]
     configured: bool
     source: str
     masked: str
@@ -168,6 +170,66 @@ def update_credential(
         key,
     )
     return CredentialOut(**asdict(current))
+
+
+class MinutesModelOut(BaseModel):
+    id: str
+    label: str
+    provider: str
+    default: bool
+
+
+@router.get("/minutes-models", response_model=list[MinutesModelOut])
+def list_minutes_models(
+    db: Session = Depends(get_db),
+    _: User = Depends(current_user),
+) -> list[MinutesModelOut]:
+    """Models a member may choose when regenerating minutes.
+
+    Readable by any signed-in user, but only as the usable list: enabled by an
+    administrator and backed by a configured key. Which keys exist is not exposed.
+    """
+    return [MinutesModelOut(**m) for m in catalog.available(db)]
+
+
+class CatalogModelOut(BaseModel):
+    id: str
+    label: str
+    provider: str
+    enabled: bool
+    key_configured: bool
+
+
+class MinutesCatalogOut(BaseModel):
+    models: list[CatalogModelOut]
+    # True when no list has been saved and the built-in default applies.
+    using_default: bool
+    default_ids: list[str]
+
+
+@router.get("/minutes-models/catalog", response_model=MinutesCatalogOut)
+def minutes_model_catalog(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> MinutesCatalogOut:
+    """Every known minutes model with its enabled and key state, for the admin checklist."""
+    enabled = set(catalog.enabled_ids(db))
+    keys = catalog.keys_configured(db)
+    saved = catalog.parse_list(credentials.resolve(db, "minutes_models"))
+    return MinutesCatalogOut(
+        models=[
+            CatalogModelOut(
+                id=m.id,
+                label=m.label,
+                provider=m.provider,
+                enabled=m.id in enabled,
+                key_configured=keys.get(m.provider, False),
+            )
+            for m in catalog.MINUTES_MODELS
+        ],
+        using_default=not any(i in catalog.BY_ID for i in saved),
+        default_ids=list(catalog.DEFAULT_REGENERATION_MODELS),
+    )
 
 
 @router.patch("/{key}", response_model=ToggleOut)

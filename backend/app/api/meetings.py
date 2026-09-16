@@ -6,16 +6,18 @@ import asyncio
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import features, progress, storage
+from app import features, live, progress, storage
+from app.api.series import create_series
 from app.config import settings
 from app.db import get_db
-from app.deps import current_user
+from app.deps import current_user, require_admin
 from app.models import Meeting, MeetingStatus, Participant, Segment, User
 from app.security import sign_resource, verify_resource
 from app.schemas import (
@@ -29,6 +31,10 @@ from app.worker.tasks import harvest_voiceprint_task, process_meeting_task
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 
+# Longer than the longest busy-provider retry wait (10 min), so a meeting that is
+# merely waiting to retry is not requeued twice.
+STALE_PROCESSING_SECONDS = 15 * 60
+
 
 def _load(db: Session, meeting_id: uuid.UUID) -> Meeting:
     meeting = db.execute(
@@ -38,6 +44,7 @@ def _load(db: Session, meeting_id: uuid.UUID) -> Meeting:
             selectinload(Meeting.segments),
             selectinload(Meeting.participants),
             selectinload(Meeting.minutes),
+            selectinload(Meeting.series),
         )
     ).scalar_one_or_none()
     if meeting is None:
@@ -51,12 +58,17 @@ def create_meeting(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> Meeting:
+    series_id = payload.series_id
+    if payload.new_series_name:
+        series_id = create_series(db, payload.new_series_name, user).id
+
     meeting = Meeting(
         title=payload.title,
         source=payload.source,
         language_hint=payload.language_hint,
         asr_provider=payload.asr_provider,
         created_by=user.id,
+        series_id=series_id,
     )
     db.add(meeting)
     db.commit()
@@ -85,6 +97,11 @@ def upload_audio(
     key = f"meetings/{meeting_id}/source.{suffix}"
     storage.put_bytes(key, file.file.read(), content_type=file.content_type or "audio/wav")
 
+    # The complete recording supersedes any live preview still running.
+    if meeting.is_live:
+        meeting.is_live = False
+        live.stop(str(meeting_id))
+
     meeting.audio_key = key
     meeting.status = MeetingStatus.uploaded
     meeting.error = None
@@ -107,14 +124,23 @@ def reprocess(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
     if not meeting.audio_key:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "This meeting has no audio")
-    if meeting.status == MeetingStatus.processing:
-        raise HTTPException(status.HTTP_409_CONFLICT, "This meeting is already processing")
+    # "uploaded" is queued-but-not-started; requeueing it would run it twice.
+    if meeting.status in (MeetingStatus.uploaded, MeetingStatus.processing):
+        # A live job reports at least every few seconds (every few minutes while
+        # waiting to retry a busy provider). Silence longer than that means the
+        # worker died mid-run - a crash or a restart - and the meeting would
+        # otherwise be stuck as "processing" forever.
+        quiet = progress.seconds_since_update(str(meeting.id))
+        if quiet is not None and quiet < STALE_PROCESSING_SECONDS:
+            raise HTTPException(status.HTTP_409_CONFLICT, "This meeting is already processing")
+        log.warning("Meeting %s was processing but silent for %ss; requeueing", meeting.id, quiet)
 
     meeting.status = MeetingStatus.uploaded
     meeting.error = None
     db.commit()
 
     process_meeting_task.delay(str(meeting.id))
+    progress.publish(str(meeting.id), "queued", 0, "Queued for processing")
     return meeting
 
 
@@ -133,7 +159,7 @@ def list_meetings(
     search across history is the intended next step - see README "Searching
     history"; `minutes.embedding` is already in the schema for it.
     """
-    stmt = select(Meeting)
+    stmt = select(Meeting).options(selectinload(Meeting.series))
 
     if status_filter:
         stmt = stmt.where(Meeting.status == status_filter)
@@ -302,7 +328,9 @@ async def stream_progress(meeting_id: uuid.UUID) -> StreamingResponse:
                 yield f"data: {text}\n\n"
 
                 try:
-                    if json.loads(text).get("stage") in ("done", "failed"):
+                    if json.loads(text).get("stage") in (
+                        "done", "failed", "minutes_done", "minutes_failed"
+                    ):
                         break
                 except json.JSONDecodeError:
                     pass
@@ -344,14 +372,49 @@ def overview(
     }
 
 
+@router.delete("/{meeting_id}/audio", response_model=MeetingOut)
+def delete_recording(
+    meeting_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> Meeting:
+    """Delete a meeting's recording, keeping its transcript and minutes.
+
+    Administrators only. The meeting is stamped the same way the retention job
+    stamps it, so the page explains that the recording is gone.
+    """
+    meeting = db.get(Meeting, meeting_id)
+    if meeting is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
+    if not meeting.audio_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "This meeting has no recording")
+    if meeting.status in (MeetingStatus.uploaded, MeetingStatus.processing) or meeting.is_live:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Wait for processing to finish before deleting the recording"
+        )
+
+    storage.delete(meeting.audio_key)
+    meeting.audio_key = None
+    meeting.audio_deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    log.info("Administrator %s deleted the recording of meeting %s", admin.email, meeting_id)
+    return meeting
+
+
 @router.delete("/{meeting_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def delete_meeting(
     meeting_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    admin: User = Depends(require_admin),
 ) -> None:
+    """Delete a meeting with its recording, transcript and minutes. Administrators only."""
     meeting = db.get(Meeting, meeting_id)
     if meeting is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
+    if meeting.audio_key:
+        storage.delete(meeting.audio_key)
+    if meeting.is_live:
+        live.stop(str(meeting_id))
     db.delete(meeting)
     db.commit()
+    log.info("Administrator %s deleted meeting %s", admin.email, meeting_id)

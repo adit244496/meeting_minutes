@@ -28,6 +28,8 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.minutes.catalog import BY_ID as MINUTES_MODEL_BY_ID
+from app.minutes.catalog import GEMINI_MODELS, model_ids
 from app.models import AppSetting
 
 log = logging.getLogger(__name__)
@@ -58,7 +60,11 @@ class Credential:
     # name, a provider choice) are stored and returned as typed.
     secret: bool = True
     placeholder: str = ""
+    # Enforced: the value must be one of these.
     choices: tuple[str, ...] = ()
+    # Offered in a dropdown, not enforced - a model released after this list
+    # was written can still be typed in.
+    suggestions: tuple[str, ...] = ()
 
 
 KEYS: tuple[Credential, ...] = (
@@ -77,12 +83,21 @@ KEYS: tuple[Credential, ...] = (
         key="anthropic_api_key",
         label="Anthropic",
         description=(
-            "Writes the minutes from a finished transcript. Transcription does "
-            "not need it - without it, transcripts still work and only minutes "
-            "fail, with an explanation."
+            "Writes the minutes when the minutes provider is Anthropic. "
+            "Create a key at console.anthropic.com."
         ),
         env_var="ANTHROPIC_API_KEY",
         placeholder="sk-ant-…",
+    ),
+    Credential(
+        key="openai_api_key",
+        label="OpenAI",
+        description=(
+            "Writes the minutes when the minutes provider is OpenAI. "
+            "Create a key at platform.openai.com/api-keys."
+        ),
+        env_var="OPENAI_API_KEY",
+        placeholder="sk-…",
     ),
     Credential(
         key="elevenlabs_api_key",
@@ -125,14 +140,44 @@ MODELS: tuple[Credential, ...] = (
         env_var="GEMINI_MODEL",
         secret=False,
         placeholder="gemini-3.6-flash",
+        suggestions=GEMINI_MODELS,
+    ),
+    Credential(
+        key="minutes_provider",
+        label="Minutes provider",
+        description="Which service writes the minutes. Existing minutes are untouched.",
+        env_var="MINUTES_PROVIDER",
+        secret=False,
+        choices=("anthropic", "openai"),
     ),
     Credential(
         key="anthropic_model",
-        label="Minutes model",
-        description="The model that writes the minutes.",
+        label="Anthropic model",
+        description="The Claude model that writes the minutes.",
         env_var="ANTHROPIC_MODEL",
         secret=False,
         placeholder="claude-opus-5",
+        suggestions=model_ids("anthropic"),
+    ),
+    Credential(
+        key="openai_model",
+        label="OpenAI model",
+        description="The OpenAI model that writes the minutes.",
+        env_var="OPENAI_MODEL",
+        secret=False,
+        placeholder="gpt-5",
+        suggestions=model_ids("openai"),
+    ),
+    Credential(
+        key="minutes_models",
+        label="Models available for regeneration",
+        description=(
+            "Comma-separated model ids members can pick when regenerating minutes. "
+            "A model is only offered when its provider has a key."
+        ),
+        env_var="MINUTES_MODELS",
+        secret=False,
+        placeholder="gpt-4o-mini,claude-sonnet-5",
     ),
 )
 
@@ -258,6 +303,7 @@ class Status:
     secret: bool
     placeholder: str
     choices: tuple[str, ...]
+    suggestions: tuple[str, ...]
     configured: bool
     # database | environment | unset - which one is in force.
     source: str
@@ -288,6 +334,7 @@ def describe(db: Session) -> list[Status]:
                 secret=credential.secret,
                 placeholder=credential.placeholder,
                 choices=credential.choices,
+                suggestions=credential.suggestions,
                 configured=bool(value),
                 source="database" if stored else "environment" if env else "unset",
                 masked=mask(value) if credential.secret else value,
@@ -313,6 +360,12 @@ def set_value(db: Session, key: str, value: str, user_id=None) -> Status:
     value = value.strip()
     if credential.choices and value and value not in credential.choices:
         raise ValueError(f"{key} must be one of: {', '.join(credential.choices)}")
+    if key == "minutes_models" and value:
+        ids = [part.strip() for part in value.split(",") if part.strip()]
+        unknown = [i for i in ids if i not in MINUTES_MODEL_BY_ID]
+        if unknown:
+            raise ValueError(f"Unknown minutes model(s): {', '.join(unknown)}")
+        value = ",".join(dict.fromkeys(ids))
 
     row = db.get(AppSetting, PREFIX + key)
 

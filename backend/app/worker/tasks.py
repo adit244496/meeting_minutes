@@ -8,29 +8,125 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from app import features, storage
+from app import features, progress, storage
+from app.asr.base import ProviderBusyError
 from app.audio import to_wav16k_mono
 from app.db import SessionLocal
-from app.models import Meeting, Minutes, MinutesVersion, Segment, Voiceprint
-from app.pipeline import process_meeting
+from app.models import Meeting, MeetingStatus, Minutes, MinutesVersion, Segment, Voiceprint
+from app.pipeline import generate_and_store_minutes, process_meeting
 from app.speakers.identify import embed_cluster
 from app.worker.celery_app import celery
 
 log = logging.getLogger(__name__)
 
+# Import the Gemini SDK here, in the prefork parent, so every child process
+# inherits it. Imported lazily inside the provider instead, it cost ~6s at the
+# start of the first meeting each child handled.
+try:
+    import google.genai  # noqa: F401
+except ImportError:  # pragma: no cover - only needed for the Gemini provider
+    pass
 
-@celery.task(name="meetings.process", bind=True, max_retries=0)
+
+# Waits before re-running a meeting whose provider was overloaded. The
+# provider already backed off for about a minute inside the run.
+BUSY_RETRY_DELAYS_SECONDS = (120, 300, 600)
+
+
+@celery.task(name="meetings.process", bind=True, max_retries=len(BUSY_RETRY_DELAYS_SECONDS))
 def process_meeting_task(self, meeting_id: str) -> dict:
     """Run the full pipeline for one meeting.
 
-    Deliberately no auto-retry: a failed run has already written the error onto
-    the meeting row for the user to see, and blindly re-running a hosted-ASR
-    call costs real money. Re-queue explicitly via POST /reprocess instead.
+    Retries only when the provider was overloaded (ProviderBusyError): a busy
+    response is not billed and nothing is wrong with the meeting. Any other
+    failure has already written the error onto the meeting row, and blindly
+    re-running a hosted-ASR call costs real money - re-queue explicitly via
+    POST /reprocess instead.
     """
+    attempt = self.request.retries
+    retry_in = (
+        BUSY_RETRY_DELAYS_SECONDS[attempt] if attempt < len(BUSY_RETRY_DELAYS_SECONDS) else None
+    )
     db = SessionLocal()
     try:
-        process_meeting(db, uuid.UUID(meeting_id))
+        process_meeting(db, uuid.UUID(meeting_id), retry_in_seconds=retry_in)
         return {"meeting_id": meeting_id, "status": "completed"}
+    except ProviderBusyError as exc:
+        if retry_in is None:
+            raise
+        raise self.retry(exc=exc, countdown=retry_in)
+    finally:
+        db.close()
+
+
+@celery.task(name="live.transcribe", bind=True, max_retries=0)
+def live_transcribe_task(self, meeting_id: str) -> dict:
+    """One pass of the live transcript: transcribe audio that arrived since the last.
+
+    Queued by the API as audio pieces arrive (at most one at a time per meeting).
+    Goes again straight away while a backlog remains, e.g. after a slow model call.
+    """
+    from app import live
+
+    db = SessionLocal()
+    try:
+        result = live.transcribe_pending(db, uuid.UUID(meeting_id))
+    except Exception:  # noqa: BLE001 - a failed preview must not break the recording
+        log.exception("Live transcription pass failed for meeting %s", meeting_id)
+        progress.publish(meeting_id, "live", 0, "Live transcript hit an error — it will retry on the next audio")
+        result = {"error": True}
+    finally:
+        db.close()
+    if result.get("more") and live.try_queue(meeting_id):
+        live_transcribe_task.delay(meeting_id)
+    return result
+
+
+@celery.task(name="minutes.generate", bind=True, max_retries=0)
+def generate_minutes_task(
+    self,
+    meeting_id: str,
+    language: str | None = None,
+    kind: str = "detailed",
+    model: str | None = None,
+) -> dict:
+    """Generate (or regenerate) minutes for a meeting that has a transcript.
+
+    Runs in the worker rather than the request: an LLM writing minutes for a
+    long meeting takes a minute or more, which would otherwise hold an HTTP
+    request open with nothing to show. Progress goes out on the meeting's
+    progress channel under the "minutes" stage, finishing with "minutes_done"
+    or "minutes_failed" - distinct from the transcription pipeline's "done"
+    and "failed", which change the meeting's status.
+    """
+    mid = meeting_id
+    db = SessionLocal()
+    try:
+        meeting = db.get(Meeting, uuid.UUID(meeting_id))
+        if meeting is None:
+            return {"generated": False, "reason": "meeting not found"}
+
+        progress.publish(mid, "minutes", 3, "Loading the transcript")
+        generate_and_store_minutes(
+            db,
+            meeting,
+            output_language=language,
+            kind=kind,
+            model_override=model,
+            on_progress=lambda fraction, message: progress.publish(
+                mid, "minutes", max(3, min(99, round(fraction * 100))), message
+            ),
+        )
+        meeting.status = MeetingStatus.completed
+        meeting.error = None
+        db.commit()
+        progress.publish(mid, "minutes_done", 100, f"{kind.capitalize()} minutes ready")
+        return {"generated": True}
+    except Exception as exc:  # noqa: BLE001 - reported to the page, not retried
+        log.exception("Minutes generation failed for meeting %s", mid)
+        db.rollback()
+        progress.publish(mid, "minutes_failed", 100, str(exc))
+        return {"generated": False, "reason": str(exc)}
     finally:
         db.close()
 

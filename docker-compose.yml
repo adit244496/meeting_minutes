@@ -37,6 +37,9 @@ services:
       DATABASE_URL: postgresql+psycopg://mm:mm@db:5432/meeting_minutes
       REDIS_URL: redis://redis:6379/0
       LOCAL_STORAGE_DIR: /data/recordings
+      # Same stale-reload problem as the frontend: poll instead of relying on
+      # file events that Docker Desktop does not forward.
+      WATCHFILES_FORCE_POLLING: "true"
     depends_on:
       db:
         condition: service_healthy
@@ -99,6 +102,7 @@ services:
       - "5017:5173"
     environment:
       VITE_API_URL: http://localhost:8017
+      VITE_USE_POLLING: "true"
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
 
 volumes:

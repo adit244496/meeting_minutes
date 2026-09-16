@@ -102,7 +102,7 @@ def enroll_voice(
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Voice enrollment is turned off. An administrator can enable it "
-            "under Users & Voices.",
+            "under Settings > Features.",
         )
 
     user = db.get(User, user_id)

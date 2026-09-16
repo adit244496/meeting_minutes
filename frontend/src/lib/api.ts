@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+
 const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 export const API_BASE = BASE;
 const TOKEN_KEY = "mm.token";
@@ -18,7 +20,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   const jwt = token.get();
   if (jwt) headers.set("Authorization", `Bearer ${jwt}`);
-  if (init.body && !(init.body instanceof FormData)) {
+  if (typeof init.body === "string" && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -71,6 +73,47 @@ export interface Meeting {
   audio_deleted_at: string | null;
   transcript_deleted_at: string | null;
   minutes_deleted_at: string | null;
+  series_id: string | null;
+  series_name: string | null;
+  is_live: boolean;
+  live_transcribed_until: number | null;
+  has_recording: boolean;
+}
+
+export interface Series {
+  id: string;
+  name: string;
+  meeting_count: number;
+  last_meeting_at: string | null;
+}
+
+export interface SeriesMeeting {
+  id: string;
+  title: string;
+  status: MeetingStatus;
+  started_at: string;
+  duration_seconds: number | null;
+  minutes: Pick<
+    Minutes,
+    "kind" | "summary" | "key_points" | "decisions" | "action_items" | "open_questions" | "follow_ups"
+  > | null;
+}
+
+export interface SeriesSuggestion {
+  suggest: boolean;
+  series_id?: string | null;
+  series_name?: string;
+  meetings?: { id: string; title: string; started_at: string }[];
+}
+
+export type FollowUpStatus = "done" | "in_progress" | "not_started" | "blocked" | "dropped" | "not_discussed";
+
+export interface FollowUp {
+  item: string;
+  kind?: "action_item" | "open_question";
+  owner?: string | null;
+  status: FollowUpStatus;
+  note?: string | null;
 }
 
 export interface Participant {
@@ -92,8 +135,13 @@ export interface Segment {
   text: string;
 }
 
+export type MinutesKind = "short" | "detailed";
+
 export interface Minutes {
+  kind: MinutesKind;
   summary: string;
+  key_points: string[];
+  follow_ups: FollowUp[];
   topics: { title: string; discussion: string; speakers: string[] }[];
   decisions: { decision: string; rationale?: string | null; decided_by?: string | null }[];
   action_items: { task: string; owner: string; due?: string | null; priority: string }[];
@@ -111,7 +159,10 @@ export interface MinutesVersion {
   source: string;
   model: string;
   created_at: string;
+  created_by_name: string | null;
   summary: string;
+  key_points: string[];
+  follow_ups: FollowUp[];
   topics: Minutes["topics"];
   decisions: Minutes["decisions"];
   action_items: Minutes["action_items"];
@@ -141,16 +192,32 @@ export interface CredentialSetting {
   secret: boolean;
   placeholder: string;
   choices: string[];
+  /** Offered in a dropdown; unlike `choices`, other values are still allowed. */
+  suggestions: string[];
   configured: boolean;
   source: "database" | "environment" | "unset";
   masked: string;
   updated_at: string | null;
 }
 
+/** A model a member can pick when regenerating minutes. */
+export interface MinutesModel {
+  id: string;
+  label: string;
+  provider: string;
+  default: boolean;
+}
+
+export interface MinutesModelCatalog {
+  models: { id: string; label: string; provider: string; enabled: boolean; key_configured: boolean }[];
+  using_default: boolean;
+  default_ids: string[];
+}
+
 export interface MeetingDetail extends Meeting {
   participants: Participant[];
   segments: Segment[];
-  minutes: Minutes | null;
+  minutes: Minutes[];
 }
 
 export interface FeatureToggle {
@@ -165,6 +232,46 @@ export interface Progress {
   stage: string;
   percent: number;
   message: string;
+  /** Unix seconds when the worker sent this update. */
+  ts?: number;
+}
+
+const FINAL_STAGES = new Set(["done", "failed", "minutes_done", "minutes_failed"]);
+
+/** Live processing progress for one meeting over SSE.
+ *
+ *  EventSource reconnects on its own after a dropped connection (a proxy
+ *  timeout, the API reloading), so errors are not treated as the end - only a
+ *  "done" or "failed" event is. `onFinish` fires once, so the page can reload. */
+export function useMeetingProgress(
+  id: string | undefined,
+  active: boolean,
+  onFinish?: (progress: Progress) => void,
+): Progress | null {
+  const [progress, setProgress] = useState<Progress | null>(null);
+  const finish = useRef(onFinish);
+  finish.current = onFinish;
+
+  useEffect(() => {
+    if (!id || !active) return;
+    const stream = api.progressStream(id);
+    stream.onmessage = (event) => {
+      let update: Progress;
+      try {
+        update = JSON.parse(event.data) as Progress;
+      } catch {
+        return;
+      }
+      setProgress(update);
+      if (FINAL_STAGES.has(update.stage)) {
+        stream.close();
+        finish.current?.(update);
+      }
+    };
+    return () => stream.close();
+  }, [id, active]);
+
+  return progress;
 }
 
 // ---------- endpoints ----------
@@ -197,9 +304,28 @@ export const api = {
   listMeetings: (q?: string) =>
     request<Meeting[]>(`/api/meetings${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   getMeeting: (id: string) => request<MeetingDetail>(`/api/meetings/${id}`),
+  overview: () =>
+    request<{ total_meetings: number; by_status: Record<string, number>; total_hours: number; identified_speakers: number }>(
+      "/api/meetings/stats/overview",
+    ),
   audioUrl: (id: string) => request<{ url: string }>(`/api/meetings/${id}/audio-url`),
-  createMeeting: (body: { title: string; source?: string; language_hint?: string | null }) =>
-    request<Meeting>("/api/meetings", { method: "POST", body: JSON.stringify(body) }),
+  createMeeting: (body: {
+    title: string;
+    source?: string;
+    language_hint?: string | null;
+    series_id?: string | null;
+    new_series_name?: string | null;
+  }) => request<Meeting>("/api/meetings", { method: "POST", body: JSON.stringify(body) }),
+
+  listSeries: () => request<Series[]>("/api/series"),
+  seriesMeetings: (seriesId: string) =>
+    request<{ series: Series; meetings: SeriesMeeting[] }>(`/api/series/${seriesId}/meetings`),
+  seriesSuggestion: (meetingId: string) =>
+    request<SeriesSuggestion>(`/api/meetings/${meetingId}/series-suggestion`),
+  assignSeries: (
+    meetingId: string,
+    body: { series_id?: string | null; new_series_name?: string | null; include_meeting_ids?: string[] },
+  ) => request<Meeting>(`/api/meetings/${meetingId}/series`, { method: "PUT", body: JSON.stringify(body) }),
   uploadAudio: (id: string, file: Blob, filename: string) => {
     const form = new FormData();
     form.append("file", file, filename);
@@ -207,24 +333,62 @@ export const api = {
   },
   reprocess: (id: string) => request<Meeting>(`/api/meetings/${id}/reprocess`, { method: "POST" }),
   deleteMeeting: (id: string) => request<void>(`/api/meetings/${id}`, { method: "DELETE" }),
+  /** Admin only: removes the audio, keeps transcript and minutes. */
+  deleteRecording: (id: string) => request<Meeting>(`/api/meetings/${id}/audio`, { method: "DELETE" }),
+
+  liveStart: (id: string) => request<{ live: boolean }>(`/api/meetings/${id}/live/start`, { method: "POST" }),
+  /** Save a live recording from the server's copy, when the recording tab is gone. */
+  liveFinish: (id: string) => request<Meeting>(`/api/meetings/${id}/live/finish`, { method: "POST" }),
+  liveStop: (id: string) => request<{ live: boolean }>(`/api/meetings/${id}/live/stop`, { method: "POST" }),
+  /** Send the next piece of a live recording. Resolves to the next sequence
+   *  number the server expects - lower than `seq + 1` when pieces went missing. */
+  async liveChunk(id: string, seq: number, blob: Blob, ext: string): Promise<number> {
+    const headers = new Headers({ "Content-Type": blob.type || "application/octet-stream" });
+    const jwt = token.get();
+    if (jwt) headers.set("Authorization", `Bearer ${jwt}`);
+    const response = await fetch(`${BASE}/api/meetings/${id}/live/chunk?seq=${seq}&ext=${ext}`, {
+      method: "POST",
+      headers,
+      body: blob,
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 409 && typeof body.detail?.expected_seq === "number") return body.detail.expected_seq;
+    if (!response.ok) throw new ApiError(response.status, typeof body.detail === "string" ? body.detail : "Upload failed");
+    return body.next_seq as number;
+  },
   relabel: (id: string, body: { speaker_label: string; user_id?: string | null; enroll?: boolean }) =>
     request<MeetingDetail>(`/api/meetings/${id}/speakers`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  regenerateMinutes: (id: string, language?: string) =>
-    request<Minutes>(`/api/meetings/${id}/minutes${language ? `?language=${language}` : ""}`, {
-      method: "POST",
-    }),
-  updateMinutes: (id: string, body: Partial<Omit<Minutes, "model" | "created_at" | "version" | "source" | "edited_at">>) =>
-    request<Minutes>(`/api/meetings/${id}/minutes`, {
+  /** Queues generation; progress arrives on progressStream as "minutes" events. */
+  regenerateMinutes: (id: string, kind: MinutesKind, language?: string, model?: string) =>
+    request<{ queued: boolean }>(
+      `/api/meetings/${id}/minutes?kind=${kind}${language ? `&language=${language}` : ""}${
+        model ? `&model=${encodeURIComponent(model)}` : ""
+      }`,
+      { method: "POST" },
+    ),
+  currentProgress: (id: string) =>
+    request<Partial<Progress> & { age_seconds: number | null }>(`/api/meetings/${id}/progress`),
+  updateMinutes: (
+    id: string,
+    kind: MinutesKind,
+    body: Partial<
+      Pick<
+        Minutes,
+        "summary" | "key_points" | "follow_ups" | "topics" | "decisions" | "action_items" | "open_questions"
+      >
+    >,
+  ) =>
+    request<Minutes>(`/api/meetings/${id}/minutes?kind=${kind}`, {
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  listMinutesVersions: (id: string) =>
-    request<MinutesVersion[]>(`/api/meetings/${id}/minutes/versions`),
-  restoreMinutesVersion: (id: string, version: number) =>
-    request<Minutes>(`/api/meetings/${id}/minutes/versions/${version}/restore`, {
+  listMinutesVersions: (id: string, kind: MinutesKind) =>
+    request<MinutesVersion[]>(`/api/meetings/${id}/minutes/versions?kind=${kind}`),
+  restoreMinutesVersion: (id: string, kind: MinutesKind, version: number) =>
+    request<Minutes>(`/api/meetings/${id}/minutes/versions/${version}/restore?kind=${kind}`, {
       method: "POST",
     }),
 
@@ -244,11 +408,17 @@ export const api = {
 
   // Admin-only, and the response carries a mask rather than the key.
   listCredentials: () => request<CredentialSetting[]>("/api/settings/credentials"),
+  listMinutesModels: () => request<MinutesModel[]>("/api/settings/minutes-models"),
+  minutesModelCatalog: () => request<MinutesModelCatalog>("/api/settings/minutes-models/catalog"),
   setCredential: (key: string, value: string) =>
     request<CredentialSetting>(`/api/settings/credentials/${key}`, {
       method: "PUT",
       body: JSON.stringify({ value }),
     }),
+
+  /** Every transcript and/or set of minutes from the last `days` days as a ZIP. */
+  exportMeetings: (kind: "transcript" | "minutes" | "both", days: number): Promise<void> =>
+    api.download(`/api/exports/meetings?kind=${kind}&days=${days}`, "neo-minutes-export.zip"),
 
   /** Fetch a protected file and hand it to the browser as a download.
    *

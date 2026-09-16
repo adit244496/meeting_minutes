@@ -1,4 +1,4 @@
-# systemd unit for the Meeting Minutes background worker.
+# systemd unit for the Neo Minutes background worker.
 #
 #   sudo cp meeting_minutes_worker.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
@@ -15,7 +15,7 @@
 # its own unit, or the sweep fires once per worker.
 
 [Unit]
-Description=Meeting Minutes worker (Celery + retention scheduler)
+Description=Neo Minutes worker (Celery + retention scheduler)
 After=network.target postgresql.service redis-server.service
 Wants=postgresql.service redis-server.service
 

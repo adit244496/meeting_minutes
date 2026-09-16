@@ -27,12 +27,15 @@ silently storing half a meeting.
 from __future__ import annotations
 
 import logging
+import re
+import threading
+import time
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from app.asr.base import ASRResult, TranscriptSegment
-from app.audio import duration_seconds, to_flac
+from app.asr.base import ASRResult, ProgressFn, ProviderBusyError, TranscriptSegment
+from app.audio import duration_seconds, to_opus
 from app.config import settings
 
 log = logging.getLogger(__name__)
@@ -40,6 +43,49 @@ log = logging.getLogger(__name__)
 # Fraction of the audio that must be covered by returned segments before we
 # accept the transcript as complete.
 MIN_COVERAGE = 0.75
+
+# Codes that mean "busy, try later" rather than "this request is wrong".
+BUSY_CODES = (429, 500, 502, 503, 504)
+# Waits before each round through the model list. The "high demand" 503s come in
+# spikes of a minute or two; beyond that, the Celery task retries the whole
+# meeting later instead of holding a worker.
+ROUND_DELAYS_SECONDS = (0, 15, 40)
+
+# Share of the transcription stage spent before the model starts writing, so
+# the bar moves during upload instead of jumping.
+UPLOAD_SHARE = 0.08
+
+# Encoded audio below this goes inline in the request. The API caps a whole
+# request at 20 MB and base64 inflates by a third, so stay well under: 8 MB of
+# 32 kbps Opus is ~35 minutes. Live chunks are a few hundred KB.
+INLINE_LIMIT_MB = 8
+
+# Least thinking first. None = the model's default, the slow last resort.
+THINKING_LEVELS: tuple[str | None, ...] = ("minimal", "low", None)
+# model -> the lowest level it accepted, so later meetings skip the rejected ones.
+_accepted_level: dict[str, str | None] = {}
+
+# One transcript line: "12.5-17.0|1|bn|text". Captures start, end, speaker, language, text.
+_LINE = re.compile(
+    r"^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*\|\s*(?:S(?:PEAKER)?_?)?(\d+)\s*\|\s*([A-Za-z-]{2,8})\s*\|\s*(.*\S)\s*$"
+)
+_LANG_LINE = re.compile(r"^\s*LANG\s*=\s*([A-Za-z-]{2,8})\s*$")
+
+# The transcript comes back as these lines rather than JSON. Measured on a
+# 9-minute Bengali/English meeting: 6.2K output tokens against 12.6-16.2K for
+# the same content as JSON, whose repeated key names cost more than the words.
+# Output tokens are what a transcription waits on, so this roughly halves it.
+OUTPUT_FORMAT = """
+
+OUTPUT FORMAT - plain text only. No JSON, no markdown, no commentary.
+First line: LANG=<dominant language code: en, hi or bn>
+Then one line per segment, in order:
+<start seconds>-<end seconds>|<speaker number>|<language code>|<verbatim text>
+Timestamps have one decimal. Speaker numbers start at 0. Keep each segment on one line.
+Example:
+LANG=hi
+0.0-4.2|0|hi|<words in Devanagari>
+4.2-7.9|1|en|<words in English>"""
 
 LANGUAGE_NAMES = {"en": "English", "hi": "Hindi", "bn": "Bengali"}
 
@@ -60,8 +106,8 @@ class _Transcript(BaseModel):
 PROMPT = """Transcribe this meeting recording completely and verbatim.
 
 Rules:
-- Diarize. Assign every utterance a stable speaker id (SPEAKER_00, SPEAKER_01, \
-...). The same person must keep the same id for the whole recording.
+- Diarize. Assign every utterance a stable speaker number (0, 1, 2, ...). The \
+same person must keep the same number for the whole recording.
 - Give start and end timestamps in seconds for every segment. Be precise - these \
 are used to cut audio.
 - Transcribe in the ORIGINAL script. Hindi in Devanagari, Bengali in Bengali \
@@ -82,9 +128,23 @@ class GeminiProvider:
         if not self.api_key:
             raise RuntimeError("GEMINI_API_KEY is not set")
 
-    def transcribe(self, audio_path: Path, language_hint: str | None = None) -> ASRResult:
-        from google import genai
+    def transcribe(
+        self,
+        audio_path: Path,
+        language_hint: str | None = None,
+        on_progress: ProgressFn | None = None,
+        context: str | None = None,
+    ) -> ASRResult:
+        """Transcribe a recording, or one live chunk of a recording in progress.
 
+        `context` marks a live chunk: the last few lines already transcribed,
+        so speaker ids and half-finished sentences carry across the boundary.
+        A chunk can end in silence, so the coverage check is skipped for it.
+        """
+        from google import genai
+        from google.genai import types
+
+        report = on_progress or (lambda _fraction, _message: None)
         client = genai.Client(api_key=self.api_key)
         total_seconds = duration_seconds(audio_path)
 
@@ -96,45 +156,67 @@ class GeminiProvider:
             prompt += (
                 "\n- The audio may mix English, Hindi and Bengali. Detect per segment."
             )
+        if context:
+            prompt += (
+                "\n\nThis audio is the next part of a meeting that is still being recorded. "
+                "Timestamps start at 0 for this part. The end of the part transcribed so far "
+                "is below, for context only - do not transcribe it again. Where a voice is "
+                "clearly the same person, reuse their speaker number; the first words here may "
+                "finish a sentence cut off at the end of that part.\n"
+                f"{context}"
+            )
+        prompt += OUTPUT_FORMAT
 
-        # Files API rather than inline data: inline caps at 20 MB total and an
-        # hour of audio blows past that even compressed.
-        flac = to_flac(audio_path, audio_path.with_suffix(".flac"))
-        # The mime type must be explicit. The SDK guesses it from the extension
-        # via Python's mimetypes table, and slim container images have no entry
-        # for .flac - the upload fails with "Unknown mime type" otherwise.
-        uploaded = client.files.upload(file=str(flac), config={"mime_type": "audio/flac"})
+        report(0.0, "Compressing audio for upload")
+        encoded = to_opus(audio_path, audio_path.with_suffix(".ogg"))
+        size_mb = encoded.stat().st_size / 1_000_000
+        uploaded = None
 
         try:
-            uploaded = _wait_until_active(client, uploaded)
+            if size_mb < INLINE_LIMIT_MB:
+                # Small enough to send in the request itself, which skips the
+                # upload, the wait for processing and the delete - seconds that
+                # matter for a live chunk.
+                audio = types.Part.from_bytes(data=encoded.read_bytes(), mime_type="audio/ogg")
+            else:
+                # Files API for anything larger: inline requests cap at 20 MB.
+                report(0.02, f"Uploading audio ({size_mb:.1f} MB)")
+                # The mime type must be explicit. The SDK guesses it from the
+                # extension, and slim container images lack entries for audio
+                # formats - the upload fails with "Unknown mime type" otherwise.
+                started = time.monotonic()
+                uploaded = client.files.upload(file=str(encoded), config={"mime_type": "audio/ogg"})
+                log.info("Uploaded %.1f MB to Gemini in %.1fs", size_mb, time.monotonic() - started)
+                report(0.05, "Waiting for Gemini to accept the audio")
+                uploaded = _wait_until_active(client, uploaded)
+                audio = uploaded
 
-            # models.generate_content rather than the newer interactions API:
-            # interactions is marked experimental in google-genai 2.x and warns
-            # on every call. This is the long-standing documented path for
-            # "file + prompt in, schema-constrained JSON out".
-            response, served_by = self._generate(client, uploaded, prompt)
-            _raise_if_truncated(response)
-            parsed = response.parsed
-            if not isinstance(parsed, _Transcript):
-                text = (response.text or "").strip()
-                if not text:
-                    # An empty response is not a schema problem - validating "{}"
-                    # would report "segments: field required" and hide the real
-                    # cause. Say what the API actually returned instead.
-                    raise RuntimeError(
-                        "Gemini returned no transcript text. " + _describe_empty(response)
-                    )
-                # Text came back but did not match the schema; validating it
-                # makes the error name the offending field.
-                parsed = _Transcript.model_validate_json(text)
+            text, finish_reason, served_by = self._generate(
+                client, audio, prompt, total_seconds, report
+            )
+            if "MAX_TOKENS" in str(finish_reason or "").upper():
+                raise RuntimeError(
+                    "Gemini hit its output token limit before finishing the transcript. "
+                    "Bengali and Hindi tokenize ~3x more heavily than English, so long "
+                    "meetings in those languages are the likeliest to hit this. Split the "
+                    "recording or use a dedicated ASR provider for meetings this long."
+                )
+            if not text.strip():
+                # An empty response is not a schema problem - validating "{}"
+                # would report "segments: field required" and hide the real cause.
+                raise RuntimeError(
+                    f"Gemini returned no transcript text (finish_reason={finish_reason})."
+                )
+            parsed = _parse_transcript(text)
         finally:
             # Uploaded meeting audio should not linger on a third party longer
             # than the request needs it.
-            try:
-                client.files.delete(name=uploaded.name)
-            except Exception:  # noqa: BLE001
-                log.warning("Could not delete uploaded file %s", uploaded.name)
-            flac.unlink(missing_ok=True)
+            if uploaded is not None:
+                try:
+                    client.files.delete(name=uploaded.name)
+                except Exception:  # noqa: BLE001
+                    log.warning("Could not delete uploaded file %s", uploaded.name)
+            encoded.unlink(missing_ok=True)
 
         segments = []
         for s in parsed.segments:
@@ -154,7 +236,8 @@ class GeminiProvider:
         # chronological.
         segments.sort(key=lambda s: s.start)
 
-        _assert_complete(segments, total_seconds)
+        if not context:
+            _assert_complete(segments, total_seconds)
 
         return ASRResult(
             provider=self.name,
@@ -164,26 +247,20 @@ class GeminiProvider:
             raw={"model": served_by, "segment_count": len(segments)},
         )
 
-    def _generate(self, client, uploaded, prompt: str):
-        """Run the transcription call, falling back when the model is busy.
+    def _generate(self, client, uploaded, prompt: str, total_seconds: float, report: ProgressFn):
+        """Run the transcription call, falling back and backing off when busy.
 
-        The SDK already retries transient failures a few times. What it will not
-        do is switch model - and the newest Flash models regularly return
-        "503 This model is currently experiencing high demand" for minutes at a
-        time. Rather than fail the whole meeting, try the fallback model.
-        Anything other than overload or rate limiting (bad request, auth,
-        quota) is raised immediately, since another model will not fix it.
+        The newest Flash models regularly return "503 This model is currently
+        experiencing high demand" for a minute or two at a time, often on every
+        Flash model at once. So: try each model in turn, and if all of them are
+        busy, wait and go round again. If they are still busy after the last
+        round, raise ProviderBusyError so the task can retry the meeting later.
+
+        Anything other than overload (bad request, auth, quota exhausted) is
+        raised immediately - another model or another minute will not fix it.
         """
-        from google.genai import errors, types
+        from google.genai import errors
 
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=_Transcript,
-            # The transcript is model output, so it needs the full output
-            # budget - Bengali and Hindi tokenize heavily.
-            max_output_tokens=65536,
-            temperature=0,
-        )
         models = [self.model]
         for name in settings.gemini_fallback_models.split(","):
             name = name.strip()
@@ -191,35 +268,254 @@ class GeminiProvider:
                 models.append(name)
 
         tried: list[str] = []
-        last_error: Exception | None = None
-        for position, model in enumerate(models):
-            try:
-                response = client.models.generate_content(
-                    model=model, contents=[uploaded, prompt], config=config
+        exhausted: set[str] = set()
+        for round_no, delay in enumerate(ROUND_DELAYS_SECONDS, start=1):
+            candidates = [m for m in models if m not in exhausted]
+            if not candidates:
+                break
+            if delay:
+                _countdown(
+                    report,
+                    delay,
+                    lambda left: (
+                        f"Gemini is overloaded. Retrying in {left}s "
+                        f"(attempt {round_no} of {len(ROUND_DELAYS_SECONDS)})"
+                    ),
                 )
-            except errors.APIError as exc:
-                is_last = position == len(models) - 1
-                # 404 counts too: a model can be listed yet not served, and on
-                # the primary it means a stale GEMINI_MODEL - worth a loud
-                # warning, not a failed meeting.
-                if exc.code in (404, 429, 500, 503) and not is_last:
-                    log.warning(
-                        "Gemini model %s returned %s; trying %s",
-                        model, exc.code, models[position + 1],
-                    )
-                    tried.append(f"{model}={exc.code}")
-                    last_error = exc
-                    continue
-                tried.append(f"{model}={exc.code}")
-                raise RuntimeError(
-                    f"Gemini transcription failed on every model tried ({', '.join(tried)}). "
-                    f"Last error: {getattr(exc, 'message', exc)}"
-                ) from exc
-            if model != self.model:
-                log.info("Transcribed with fallback model %s", model)
-            return response, model
 
-        raise RuntimeError(f"All Gemini models failed: {last_error}")
+            not_found = 0
+            for model in candidates:
+                try:
+                    return self._stream_lowest_thinking(
+                        client, model, uploaded, prompt, total_seconds, report
+                    )
+                except errors.APIError as exc:
+                    tried.append(f"{model}={exc.code}")
+                    if _is_quota_exhausted(exc):
+                        log.warning("Gemini model %s: quota exhausted", model)
+                        exhausted.add(model)
+                        continue
+                    if exc.code == 404:
+                        # Listed but not served, or a stale GEMINI_MODEL.
+                        log.warning("Gemini model %s is not available (404)", model)
+                        not_found += 1
+                        continue
+                    if exc.code in BUSY_CODES:
+                        log.warning("Gemini model %s returned %s", model, exc.code)
+                        continue
+                    raise RuntimeError(
+                        f"Gemini transcription failed ({', '.join(tried)}): "
+                        f"{getattr(exc, 'message', None) or exc}"
+                    ) from exc
+
+            if not_found == len(models):
+                raise RuntimeError(
+                    f"None of the configured Gemini models exist ({', '.join(models)}). "
+                    "Update the Gemini model under Settings > AI providers."
+                )
+
+        if exhausted and len(exhausted) == len(models):
+            raise RuntimeError(
+                "Gemini's request quota is used up on every configured model "
+                f"({', '.join(models)}). This key is on Google's free tier, which allows only "
+                "a small number of requests a day - enable billing for the key in Google AI "
+                "Studio (it also stops Google using the audio to improve its models), or try "
+                "again tomorrow."
+            )
+        raise ProviderBusyError(
+            "Gemini is overloaded: every model returned a busy response across "
+            f"{len(ROUND_DELAYS_SECONDS)} attempts ({', '.join(tried)})."
+        )
+
+    def _stream_lowest_thinking(self, client, model, uploaded, prompt, total_seconds, report):
+        """Stream with the least thinking the model accepts.
+
+        Support differs per model: gemini-3.6-flash takes "minimal", while
+        gemini-3.8-flash rejects it with a 400 but takes "low". Dropping the
+        setting altogether falls back to the model's default, which is the slow
+        path, so that is the last resort rather than the first.
+        """
+        from google.genai import errors
+
+        levels = THINKING_LEVELS[THINKING_LEVELS.index(_accepted_level.get(model, "minimal")):]
+        for position, level in enumerate(levels):
+            try:
+                result = self._stream(client, model, uploaded, prompt, total_seconds, report, level)
+                _accepted_level[model] = level
+                return result
+            except errors.APIError as exc:
+                rejected = exc.code == 400 and "think" in str(exc).lower()
+                if rejected and position < len(levels) - 1:
+                    log.info("Model %s rejected thinking level %s; trying %s", model, level, levels[position + 1])
+                    continue
+                raise
+
+    def _stream(
+        self,
+        client,
+        model: str,
+        uploaded,
+        prompt: str,
+        total_seconds: float,
+        report: ProgressFn,
+        thinking_level: str | None,
+    ) -> tuple[str, object, str]:
+        """Stream one transcription, reporting how far through the audio it is.
+
+        Streaming changes nothing about the result; it exists so progress is
+        real. Lines arrive in order, so the latest end time seen is how much of
+        the recording has been transcribed so far.
+        """
+        from google.genai import types
+
+        config = types.GenerateContentConfig(
+            # Plain lines, not a JSON schema: half the output tokens (see OUTPUT_FORMAT).
+            response_mime_type="text/plain",
+            # The transcript is model output, so it needs the full output
+            # budget - Bengali and Hindi tokenize heavily.
+            max_output_tokens=65536,
+            temperature=0,
+            # Verbatim transcription needs no reasoning, and thinking tokens are
+            # generated before the first word of output - on a long meeting they
+            # were most of the wait.
+            thinking_config=(
+                types.ThinkingConfig(thinking_level=thinking_level) if thinking_level else None
+            ),
+        )
+
+        parts: list[str] = []
+        finish_reason = None
+        covered = 0.0
+        tail = ""
+        started = time.monotonic()
+        last_report = 0.0
+        stop = threading.Event()
+
+        def heartbeat() -> None:
+            # Until the first tokens arrive there is nothing to measure, but a
+            # frozen bar reads as a hang. Show that the request is alive.
+            while not stop.wait(3.0):
+                if not parts:
+                    elapsed = _clock(time.monotonic() - started)
+                    report(UPLOAD_SHARE, f"Gemini is listening to the recording… {elapsed}")
+
+        report(UPLOAD_SHARE, f"Sending to {model}")
+        watcher = threading.Thread(target=heartbeat, daemon=True)
+        watcher.start()
+        try:
+            stream = client.models.generate_content_stream(
+                model=model, contents=[uploaded, prompt], config=config
+            )
+            for chunk in stream:
+                text = chunk.text or ""
+                if text:
+                    parts.append(text)
+                    # Lines arrive in order; the end time of the latest complete
+                    # line is how far through the recording the model is. The
+                    # unfinished last line is carried to the next chunk.
+                    lines = (tail + text).split("\n")
+                    tail = lines.pop()
+                    for raw in lines:
+                        line = _LINE.match(raw)
+                        if line:
+                            covered = max(covered, float(line.group(2)))
+                for candidate in getattr(chunk, "candidates", None) or []:
+                    if getattr(candidate, "finish_reason", None):
+                        finish_reason = candidate.finish_reason
+
+                now = time.monotonic()
+                if now - last_report >= 1.0 and total_seconds > 0:
+                    last_report = now
+                    done = min(covered / total_seconds, 1.0)
+                    report(
+                        UPLOAD_SHARE + (1 - UPLOAD_SHARE) * min(done, 0.99),
+                        f"Transcribed {_clock(min(covered, total_seconds))} of {_clock(total_seconds)}",
+                    )
+        finally:
+            stop.set()
+
+        log.info(
+            "Gemini %s transcribed %.0fs of audio in %.1fs",
+            model, total_seconds, time.monotonic() - started,
+        )
+        if model != self.model:
+            log.info("Transcribed with fallback model %s", model)
+        return "".join(parts), finish_reason, model
+
+
+def _parse_transcript(text: str) -> _Transcript:
+    """Turn the line format back into the transcript model the rest expects.
+
+    JSON is still accepted, in case a model ignores the format instruction.
+    A stray line (a heading, a blank) is skipped, but a response that is mostly
+    unparseable fails loudly rather than storing a fragment as the transcript.
+    """
+    stripped = text.strip()
+    if stripped.startswith("{"):
+        return _Transcript.model_validate_json(stripped)
+
+    language = ""
+    segments: list[_Segment] = []
+    skipped: list[str] = []
+    for raw in stripped.splitlines():
+        if not raw.strip() or raw.strip().startswith("```"):
+            continue
+        lang = _LANG_LINE.match(raw)
+        if lang:
+            language = lang.group(1).lower()
+            continue
+        line = _LINE.match(raw)
+        if not line:
+            skipped.append(raw)
+            continue
+        start, end, speaker, seg_lang, words = line.groups()
+        segments.append(
+            _Segment(
+                start_seconds=float(start),
+                end_seconds=float(end),
+                speaker=f"SPEAKER_{int(speaker):02d}",
+                language=seg_lang.lower(),
+                text=words,
+            )
+        )
+
+    if skipped:
+        log.warning("Skipped %d transcript lines not in the expected format, e.g. %r", len(skipped), skipped[0][:120])
+    if not segments or len(skipped) > max(3, len(segments) // 5):
+        raise RuntimeError(
+            f"Gemini's transcript was not in the expected format ({len(segments)} lines parsed, "
+            f"{len(skipped)} not). First line: {stripped.splitlines()[0][:160]!r}"
+        )
+    if not language:
+        counts: dict[str, int] = {}
+        for s in segments:
+            counts[s.language] = counts.get(s.language, 0) + len(s.text)
+        language = max(counts, key=counts.get)
+    return _Transcript(segments=segments, primary_language=language)
+
+
+def _is_quota_exhausted(exc) -> bool:
+    """A 429 that means "no requests left today", not "slow down for a minute".
+
+    Retrying the same model for minutes cannot help, so it is skipped at once.
+    """
+    message = str(exc).lower()
+    return exc.code == 429 and ("quota" in message or "free_tier" in message or "exhausted" in message)
+
+
+def _clock(seconds: float) -> str:
+    total = int(max(0, seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
+def _countdown(report: ProgressFn, seconds: int, message) -> None:
+    """Sleep, telling the user how long is left rather than going quiet."""
+    for left in range(seconds, 0, -1):
+        if left == seconds or left % 5 == 0:
+            report(UPLOAD_SHARE, message(left))
+        time.sleep(1)
 
 
 def _wait_until_active(client, uploaded, timeout_seconds: float = 180.0):
@@ -244,42 +540,6 @@ def _wait_until_active(client, uploaded, timeout_seconds: float = 180.0):
             )
         time.sleep(2)
         current = client.files.get(name=current.name)
-
-
-def _describe_empty(response) -> str:
-    """Summarise why a response carried no text, for an actionable error."""
-    details = []
-    feedback = getattr(response, "prompt_feedback", None)
-    block = getattr(feedback, "block_reason", None) if feedback else None
-    if block:
-        details.append(f"prompt blocked: {block}")
-    candidates = getattr(response, "candidates", None) or []
-    if not candidates:
-        details.append("no candidates returned")
-    for candidate in candidates:
-        reason = getattr(candidate, "finish_reason", None)
-        message = getattr(candidate, "finish_message", None)
-        details.append(f"finish_reason={reason}" + (f" ({message})" if message else ""))
-    usage = getattr(response, "usage_metadata", None)
-    if usage is not None:
-        details.append(
-            f"output tokens={getattr(usage, 'candidates_token_count', None)}, "
-            f"thinking tokens={getattr(usage, 'thoughts_token_count', None)}"
-        )
-    return "; ".join(details) or "no further detail in the response"
-
-
-def _raise_if_truncated(response) -> None:
-    """Fail on an output-token cut-off before trying to parse half a JSON document."""
-    for candidate in getattr(response, "candidates", None) or []:
-        reason = str(getattr(candidate, "finish_reason", "") or "").upper()
-        if "MAX_TOKENS" in reason:
-            raise RuntimeError(
-                "Gemini hit its output token limit before finishing the transcript. "
-                "Bengali and Hindi tokenize ~3x more heavily than English, so long "
-                "meetings in those languages are the likeliest to hit this. Split the "
-                "recording or use a dedicated ASR provider for meetings this long."
-            )
 
 
 def _clamp_span(start: float, end: float, total_seconds: float) -> tuple[float, float]:
