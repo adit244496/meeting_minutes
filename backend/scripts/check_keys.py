@@ -29,6 +29,7 @@ from __future__ import annotations
 import getpass
 import hashlib
 import sys
+import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -94,6 +95,26 @@ LIVE = {
 }
 
 
+def odd_characters(value: str) -> str:
+    """Anything outside the alphabet every provider's keys are drawn from.
+
+    A key copied from a web page or a chat message can carry a zero-width
+    space, a non-breaking space or a smart quote. It looks perfect, it is the
+    expected length to the eye, and the provider rejects it - which is
+    indistinguishable from a revoked key until somebody looks at the bytes.
+    """
+    allowed = set(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_."
+    )
+    odd = [(i, ch) for i, ch in enumerate(value) if ch not in allowed]
+    if not odd:
+        return ""
+    where = ", ".join(
+        f"position {i} is U+{ord(ch):04X} ({unicodedata.name(ch, 'unnamed')})" for i, ch in odd[:3]
+    )
+    return f"  <-- {len(odd)} character(s) that cannot be part of a key: {where}"
+
+
 def fingerprint(value: str) -> str:
     """A short, irreversible hash. Salted with a constant so a fingerprint from
     this tool cannot be matched against a hash from anywhere else."""
@@ -114,7 +135,10 @@ def show_fingerprints(db) -> int:
             (p for p in ("sk-ant-api03-", "sk-proj-", "sk-ant-", "AIza", "AQ.", "sk-") if value.startswith(p)),
             "",
         )
-        print(f"{name:<16} {fingerprint(value)}   {head}…{value[-4:]}  {len(value)} chars")
+        print(
+            f"{name:<16} {fingerprint(value)}   {head}…{value[-4:]}  "
+            f"{len(value)} chars{odd_characters(value)}"
+        )
     return 0
 
 
@@ -123,7 +147,7 @@ def compare() -> int:
     if not pasted:
         print("Nothing pasted.")
         return 2
-    print(f"\nThat key's fingerprint: {fingerprint(pasted)}   {len(pasted)} chars")
+    print(f"\nThat key's fingerprint: {fingerprint(pasted)}   {len(pasted)} chars{odd_characters(pasted)}")
     print("Same fingerprint as the stored one  -> the key was saved exactly as pasted,")
     print("                                       and the provider is rejecting it.")
     print("Different                          -> the wrong key is stored; re-enter it")
