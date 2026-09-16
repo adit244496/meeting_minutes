@@ -102,16 +102,24 @@ def translate_transcript_task(self, meeting_id: str, language: str) -> dict:
             db,
             meeting,
             language,
+            # The language rides along, so a page that opens mid-translation
+            # knows which one is being made, not just that something is.
             on_progress=lambda fraction, message: progress.publish(
-                meeting_id, "translate", max(2, min(99, round(fraction * 100))), message
+                meeting_id,
+                "translate",
+                max(2, min(99, round(fraction * 100))),
+                message,
+                language=language,
             ),
         )
-        progress.publish(meeting_id, "translate_done", 100, f"{language} transcript ready")
+        progress.publish(
+            meeting_id, "translate_done", 100, f"{language} transcript ready", language=language
+        )
         return {"translated": True}
     except Exception as exc:  # noqa: BLE001 - reported to the page, not retried
         log.exception("Transcript translation failed for meeting %s", meeting_id)
         db.rollback()
-        progress.publish(meeting_id, "translate_failed", 100, str(exc))
+        progress.publish(meeting_id, "translate_failed", 100, str(exc), language=language)
         return {"translated": False, "reason": str(exc)}
     finally:
         db.close()

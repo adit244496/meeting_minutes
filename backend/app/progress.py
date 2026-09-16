@@ -31,7 +31,10 @@ def state_key(meeting_id: str) -> str:
     return f"meeting:{meeting_id}:state"
 
 
-def publish(meeting_id: str, stage: str, percent: int, message: str = "") -> None:
+def publish(meeting_id: str, stage: str, percent: int, message: str = "", **extra) -> None:
+    """Report progress. `extra` carries anything the stage needs - the language
+    of a running translation, say - so a page that loads mid-job can tell what
+    the job is working on, not only how far along it is."""
     payload = json.dumps(
         {
             "meeting_id": str(meeting_id),
@@ -40,6 +43,7 @@ def publish(meeting_id: str, stage: str, percent: int, message: str = "") -> Non
             "message": message,
             # Lets the API tell a live job from one whose worker died.
             "ts": time.time(),
+            **extra,
         }
     )
     try:

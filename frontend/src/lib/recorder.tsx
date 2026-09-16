@@ -24,6 +24,7 @@ export type RecorderStatus = "idle" | "starting" | "recording" | "paused" | "sav
 
 export interface StartOptions {
   title: string;
+  agenda: string | null;
   language_hint: string | null;
   series_id: string | null;
   new_series_name: string | null;
@@ -35,6 +36,9 @@ interface RecorderValue {
   meetingId: string | null;
   title: string;
   seconds: number;
+  /** When recording started, as an ISO string - the meeting's own started_at,
+   *  so a live transcript can show clock times rather than offsets. */
+  startedAt: string | null;
   liveOn: boolean;
   error: string;
   canRetryUpload: boolean;
@@ -103,6 +107,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [meetingId, setMeetingId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [seconds, setSeconds] = useState(0);
+  const [startedAt, setStartedAt] = useState<string | null>(null);
   const [liveOn, setLiveOn] = useState(false);
   const [error, setError] = useState("");
   const [failedUpload, setFailedUpload] = useState<{ id: string; blob: Blob; name: string } | null>(null);
@@ -253,6 +258,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
         setTitle(meeting.title);
         setLiveOn(enabled);
         setSeconds(0);
+        setStartedAt(meeting.started_at);
         setStatus("recording");
         clock.current = setInterval(() => setSeconds((n) => n + 1), 1000);
         if (enabled) sender.current = setInterval(flush, LIVE_SEND_MS);
@@ -299,6 +305,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       meetingId,
       title,
       seconds,
+      startedAt,
       liveOn,
       error,
       canRetryUpload: failedUpload !== null,
@@ -314,7 +321,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       },
       clearError: () => setError(""),
     }),
-    [status, meetingId, title, seconds, liveOn, error, failedUpload, savedCount, start, stop, pause, resume, upload],
+    [status, meetingId, title, seconds, startedAt, liveOn, error, failedUpload, savedCount, start, stop, pause, resume, upload],
   );
 
   return <RecorderContext.Provider value={value}>{children}</RecorderContext.Provider>;

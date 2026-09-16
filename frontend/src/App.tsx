@@ -49,6 +49,15 @@ function RecordingBar() {
                     : `Recording ${formatElapsed(r.seconds)}`}
             </strong>
             {r.title && <span className="dim"> · {r.title}</span>}
+            {/* The clock time this started, so anyone reading along knows when
+                the meeting actually happened, not just how long it has run. */}
+            {r.startedAt && (r.status === "recording" || r.status === "paused") && (
+              <span className="dim">
+                {" "}
+                · since{" "}
+                {new Date(r.startedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
             {r.status === "recording" && r.liveOn && <span className="dim"> · live transcript on</span>}
           </span>
           {r.meetingId && !onMeetingPage && (r.status === "recording" || r.status === "paused") && (

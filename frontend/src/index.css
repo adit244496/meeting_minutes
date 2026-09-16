@@ -979,14 +979,32 @@ thead th { font-size: 0.66rem; }
 
 /* ---------- meetings list ---------- */
 
+/* Wraps rather than a fixed grid: how many controls are on this row depends on
+   the person - a department picker only appears when there is a choice to make,
+   and the agenda folds out underneath. */
 .new-meeting {
-  display: grid; grid-template-columns: minmax(0, 1fr) 190px auto auto;
-  gap: 8px; padding: 10px; align-items: center;
+  display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; align-items: center;
 }
+.new-meeting > input[type="text"] { flex: 1 1 240px; min-width: 0; }
+.new-meeting > select { flex: 0 1 180px; min-width: 150px; }
+.new-meeting > .btn { flex: 0 0 auto; }
+.new-meeting .agenda-field { flex: 1 1 100%; }
+.new-meeting .agenda-field .field { gap: 4px; }
+.new-meeting textarea { resize: vertical; min-height: 68px; }
 @media (max-width: 720px) {
-  .new-meeting { grid-template-columns: 1fr 1fr; }
-  .new-meeting > input[type="text"] { grid-column: 1 / -1; }
+  .new-meeting > input[type="text"] { flex: 1 1 100%; }
+  .new-meeting > select,
+  .new-meeting > .btn { flex: 1 1 calc(50% - 4px); }
 }
+
+/* A button that reads as a link - for an optional field that is usually left alone. */
+.link-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 0; background: none; padding: 2px 0; cursor: pointer;
+  color: var(--accent); font-size: 0.84rem; font-weight: 500;
+}
+.link-btn:hover { text-decoration: underline; }
+.link-btn:disabled { color: var(--text-3); cursor: default; text-decoration: none; }
 
 .list-row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 9px 14px; }
 .cell-title { display: flex; flex-direction: column; min-width: 0; }
@@ -1740,25 +1758,56 @@ body { background: var(--bg); }
   border-bottom: 1px solid var(--accent-line);
 }
 .translation-bar.is-working { background: var(--warn-soft); border-bottom-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+/* A thin bar under the message: batches report every few seconds, and without
+   something moving in between, a running job looks like a stuck one. */
+.translate-bar { display: block; margin-top: 6px; height: 4px; }
+
+/* Something that turns while a background job runs. */
+.spinner {
+  display: inline-block; width: 13px; height: 13px; flex: none;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor; border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.spinner.sm { width: 9px; height: 9px; border-width: 1.5px; margin-left: 6px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2.4s; }
+}
 @media (max-width: 720px) {
   .tabbar > .row { width: 100%; justify-content: space-between; }
   .tabbar .segmented-sm { overflow-x: auto; }
 }
 
-/* ---------- speakers with a voice sample ---------- */
+/* ---------- speakers ---------- */
 .speaker-list { list-style: none; margin: 0; padding: 4px 6px 6px; display: grid; gap: 2px; }
 .speaker-row {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 230px);
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 230px);
   align-items: center; gap: 10px; padding: 6px 8px; border-radius: var(--r-md);
 }
 .speaker-row:hover { background: var(--surface-2); }
 .speaker-name { display: flex; flex-direction: column; min-width: 0; }
 .speaker-name strong { font-size: 0.92rem; }
-.play-btn { width: 34px; min-height: 34px; border-radius: 50%; flex: none; }
-.play-btn.is-playing { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 @media (max-width: 620px) {
-  .speaker-row { grid-template-columns: auto minmax(0, 1fr); }
+  .speaker-row { grid-template-columns: minmax(0, 1fr); }
   .speaker-row select { grid-column: 1 / -1; }
+}
+
+/* A card header that opens and closes the card. It is a <button>, so it keeps
+   the header's own layout while being reachable by keyboard. */
+.collapse-head {
+  width: 100%; border: 0; background: none; font: inherit; color: inherit;
+  cursor: pointer; text-align: left;
+}
+.collapse-head:hover h3 { color: var(--text-1); }
+.collapse-head h3 { display: flex; align-items: center; gap: 6px; }
+.collapse-head .count {
+  font-size: 0.74rem; color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+.collapse-head .caret { transition: transform 0.15s ease; opacity: 0.8; }
+.collapse-head .caret.open { transform: rotate(180deg); }
+.collapse-head .dim {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
 
 /* ---------- following the recording ----------
@@ -1823,3 +1872,12 @@ body { background: var(--bg); }
 }
 /* Same shape as the series chip, in a cooler tone so the two do not blur. */
 .series-chip.dept-chip { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+
+/* ---------- subject / agenda ---------- */
+.agenda-card { margin-bottom: 10px; }
+.agenda-card .card-body { padding-top: 8px; }
+.agenda-text {
+  margin: 0; white-space: pre-wrap; font-size: 0.9rem; color: var(--text-1); line-height: 1.5;
+}
+.agenda-card textarea { width: 100%; resize: vertical; min-height: 84px; }
+.agenda-add { margin: -2px 0 10px; }

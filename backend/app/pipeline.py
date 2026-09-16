@@ -418,6 +418,7 @@ def generate_and_store_minutes(
         on_progress=on_progress,
         kind=kind,
         previous=previous,
+        agenda=meeting.agenda,
     )
 
     existing = db.execute(

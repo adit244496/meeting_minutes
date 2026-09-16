@@ -40,6 +40,10 @@ def list_translations(
     return {
         "languages": transcripts.existing(db, meeting_id),
         "in_progress": running,
+        # Which language, so a page opened while somebody else's translation is
+        # running shows it rather than offering to start the same job again.
+        "language": state.get("language") if running else None,
+        "percent": state.get("percent") if running else None,
         "message": state.get("message") if running else None,
     }
 
@@ -89,6 +93,6 @@ def translate(
 
     # Published before the task is queued, so a page subscribing right after
     # this sees "queued" rather than a stale earlier event.
-    progress.publish(mid, "translate", 1, "Queued — waiting for a worker")
+    progress.publish(mid, "translate", 1, "Queued — waiting for a worker", language=language)
     translate_transcript_task.delay(mid, language)
     return {"queued": True, "language": language}

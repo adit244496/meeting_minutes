@@ -10,6 +10,7 @@ import {
   IconMic,
   IconPause,
   IconPlay,
+  IconPlus,
   IconRepeat,
   IconSearch,
   IconShield,
@@ -18,6 +19,7 @@ import {
 } from "../components/icons";
 import {
   api,
+  clockAt,
   formatDuration,
   formatTimestamp,
   type Department,
@@ -97,7 +99,11 @@ function MeetingRow({ meeting: m, onFinish }: { meeting: Meeting; onFinish: () =
   );
 }
 
-/** The live transcript of the recording in progress, under the new-meeting bar. */
+/** The live transcript of the recording in progress, under the new-meeting bar.
+ *
+ *  Times here are clock times, not offsets into the recording: this is read
+ *  while the meeting is still going on, and "when was that said" is the
+ *  question people actually have. */
 function LiveTranscript({ meetingId }: { meetingId: string }) {
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const progress = useMeetingProgress(meetingId, true);
@@ -123,7 +129,9 @@ function LiveTranscript({ meetingId }: { meetingId: string }) {
       {detail?.segments.length ? (
         detail.segments.slice(-40).map((s) => (
           <p key={s.idx}>
-            <span className="ts">{formatTimestamp(s.start_ms)}</span>
+            <span className="ts" title={`${formatTimestamp(s.start_ms)} into the recording`}>
+              {clockAt(detail.started_at, s.start_ms, true)}
+            </span>
             <strong>{speakerName(s.speaker_label)}</strong> {s.text}
           </p>
         ))
@@ -140,6 +148,8 @@ export default function Meetings() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [query, setQuery] = useState("");
   const [title, setTitle] = useState("");
+  const [agenda, setAgenda] = useState("");
+  const [showAgenda, setShowAgenda] = useState(false);
   const [language, setLanguage] = useState("");
   // "" = not recurring, "new" = create a series from the title, otherwise a series id.
   const [seriesChoice, setSeriesChoice] = useState("");
@@ -227,6 +237,7 @@ export default function Meetings() {
     if (!title.trim()) throw new Error("Give the meeting a title first");
     return {
       title: title.trim(),
+      agenda: agenda.trim() || null,
       language_hint: language || null,
       series_id: seriesChoice && seriesChoice !== "new" ? seriesChoice : null,
       new_series_name: seriesChoice === "new" ? title.trim() : null,
@@ -241,6 +252,8 @@ export default function Meetings() {
       const meeting = await api.createMeeting({ ...meetingOptions(), source: "upload" });
       await api.uploadAudio(meeting.id, file, file.name);
       setTitle("");
+      setAgenda("");
+      setShowAgenda(false);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
@@ -259,6 +272,8 @@ export default function Meetings() {
     try {
       await recorder.start(meetingOptions());
       setTitle("");
+      setAgenda("");
+      setShowAgenda(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start recording");
     }
@@ -394,6 +409,35 @@ export default function Meetings() {
           className="sr-only"
           onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])}
         />
+
+        {/* The agenda is optional and usually skipped, so it stays folded away
+            rather than taking a line from everyone who does not write one. */}
+        <div className="agenda-field">
+          {showAgenda || agenda ? (
+            <label className="field">
+              <span>
+                Subject / agenda <span className="dim tiny">— what this meeting is meant to cover</span>
+              </span>
+              <textarea
+                rows={3}
+                value={agenda}
+                maxLength={4000}
+                disabled={recording}
+                placeholder={"Q3 budget sign-off\nVendor shortlist\nHiring plan for Ops"}
+                onChange={(e) => setAgenda(e.target.value)}
+              />
+              <span className="hint">
+                Used to write the minutes: the summary follows these points, and anything not discussed
+                shows up as an open question.
+              </span>
+            </label>
+          ) : (
+            <button type="button" className="link-btn" onClick={() => setShowAgenda(true)} disabled={recording}>
+              <IconPlus size={13} />
+              Add a subject or agenda
+            </button>
+          )}
+        </div>
       </div>
 
       {(error || (!mic.ok && mic.reason)) && (
@@ -414,6 +458,14 @@ export default function Meetings() {
             <div className="row" style={{ gap: 8 }}>
               <span className={`live-dot ${recorder.status === "paused" ? "paused" : ""}`} aria-hidden="true" />
               <h3>{recorder.status === "paused" ? "Live transcript — paused" : "Live transcript"}</h3>
+              {recorder.startedAt && (
+                <span className="dim tiny">
+                  started {new Date(recorder.startedAt).toLocaleTimeString(undefined, {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              )}
             </div>
             <Link className="small" to={`/meetings/${recorder.meetingId}`}>
               Open meeting

@@ -240,6 +240,9 @@ def _minutes_markdown(meeting: Meeting, minutes: Minutes) -> str:
     if meeting.started_at:
         out.append(meeting.started_at.strftime("%d %B %Y, %H:%M"))
         out.append("")
+    if meeting.agenda:
+        out += ["## Agenda", "", meeting.agenda, ""]
+
     out += ["## Summary", "", minutes.summary, ""]
 
     if minutes.key_points:
@@ -394,6 +397,14 @@ def _minutes_docx(meeting: Meeting, minutes: Minutes) -> bytes:
         ):
             _run(glance, f"{n} ", bold=True, color=tone, size=12)
             _run(glance, f"{label}     ", color=tone, size=10)
+
+        if meeting.agenda:
+            _section(doc, "Agenda", "muted")
+            for line in meeting.agenda.splitlines():
+                if line.strip():
+                    p = doc.add_paragraph()
+                    p.paragraph_format.space_after = Pt(1)
+                    _run(p, line.strip(), size=10.5, color="muted")
 
         _section(doc, "Summary", "accent")
         summary = doc.add_paragraph()

@@ -232,8 +232,13 @@ def generate_minutes(
     on_progress: ProgressFn | None = None,
     kind: str = "detailed",
     previous: dict | None = None,
+    agenda: str | None = None,
 ) -> MeetingMinutes:
     """Produce structured minutes for one meeting.
+
+    `agenda` is what the organiser said the meeting was for. It steers the
+    summary towards the points that were meant to be covered - and makes the
+    ones that were not visible as open questions.
 
     `previous` is the prior meeting of the same series - {title, date,
     summary, decisions, action_items, open_questions} - so these minutes can
@@ -259,7 +264,8 @@ def generate_minutes(
     short = kind == "short"
     prompt = (
         f"Meeting title: {title}\n\n"
-        f"Write the minutes entirely in {lang_name}, whatever languages were spoken. "
+        + _agenda_block(agenda)
+        + f"Write the minutes entirely in {lang_name}, whatever languages were spoken. "
         f"Translate any direct quotes into {lang_name} too; do not copy text in "
         f"another language or script.\n\n"
         + (SHORT_INSTRUCTIONS if short else DETAILED_INSTRUCTIONS)
@@ -328,6 +334,25 @@ def _is_transient(exc: Exception) -> bool:
     if isinstance(exc, anthropic.APIStatusError) and exc.status_code in (429, 500, 502, 503, 504, 529):
         return True
     return False
+
+
+def _agenda_block(agenda: str | None) -> str:
+    """What the organiser said the meeting was for.
+
+    Deliberately framed as intent rather than fact: an agenda says what was
+    meant to happen, and a meeting often wanders off it. Treating it as a
+    checklist would have the model report items that were never discussed.
+    """
+    if not agenda or not agenda.strip():
+        return ""
+    return (
+        "The organiser set this agenda before the meeting. Use it to judge what "
+        "matters, and follow the order of its points where the discussion allows. "
+        "It is intent, not a record: write only what the transcript supports, and "
+        "if an agenda point was not discussed, say so once in open_questions "
+        "rather than inventing an outcome for it.\n"
+        f"AGENDA:\n{agenda.strip()}\n\n"
+    )
 
 
 def _previous_block(previous: dict | None) -> str:

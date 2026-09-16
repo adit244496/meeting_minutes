@@ -5,6 +5,7 @@ import { Menu, MenuGroup, MenuItem } from "../components/Menu";
 import {
   IconAlert,
   IconCheck,
+  IconChevronDown,
   IconChevronLeft,
   IconClock,
   IconClose,
@@ -26,6 +27,7 @@ import {
 import {
   API_BASE,
   api,
+  clockAt,
   formatDuration,
   formatTimestamp,
   type Department,
@@ -105,11 +107,12 @@ export default function MeetingDetail() {
   const [translatedBy, setTranslatedBy] = useState("");
   const [ready, setReady] = useState<TranscriptLanguage[]>([]);
   const [translating, setTranslating] = useState<TranscriptLanguage | null>(null);
+  const [translateSeed, setTranslateSeed] = useState<{ percent: number; message: string } | null>(null);
 
   // A few seconds of each voice, so a listener can put a name to it.
-  const [samples, setSamples] = useState<Record<string, string>>({});
-  const [playingSpeaker, setPlayingSpeaker] = useState<string | null>(null);
-  const player = useRef<HTMLAudioElement | null>(null);
+  // Collapsed by default: the list matters when somebody is naming voices, and
+  // is in the way the rest of the time.
+  const [showSpeakers, setShowSpeakers] = useState(false);
 
   // Following the recording through the transcript: the line being spoken is
   // highlighted, and the view keeps it in sight while the audio plays.
@@ -262,30 +265,6 @@ export default function MeetingDetail() {
     }
   }
 
-  useEffect(() => {
-    if (!meeting?.has_recording) return;
-    let cancelled = false;
-    api
-      .speakerSamples(id)
-      .then((r) => !cancelled && setSamples(r.samples))
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [id, meeting?.has_recording, meeting?.segments.length]);
-
-  // One player for the whole list: starting a second voice stops the first.
-  useEffect(() => {
-    const audio = new Audio();
-    audio.onended = () => setPlayingSpeaker(null);
-    audio.onerror = () => setPlayingSpeaker(null);
-    player.current = audio;
-    return () => {
-      audio.pause();
-      player.current = null;
-    };
-  }, []);
-
   /** Which line is being spoken now. Called several times a second, so state
    *  only changes when the line does - not on every tick. */
   function onPlayTime() {
@@ -316,24 +295,6 @@ export default function MeetingDetail() {
     if (!audio) return;
     audio.currentTime = startMs / 1000;
     audio.play().catch(() => undefined);
-  }
-
-  function playSample(label: string) {
-    const audio = player.current;
-    const url = samples[label];
-    if (!audio || !url) return;
-    if (playingSpeaker === label) {
-      audio.pause();
-      setPlayingSpeaker(null);
-      return;
-    }
-    audio.pause();
-    audio.src = url.startsWith("http") ? url : API_BASE + url;
-    audio.currentTime = 0;
-    audio
-      .play()
-      .then(() => setPlayingSpeaker(label))
-      .catch(() => setError("Could not play this voice sample"));
   }
 
   useEffect(() => {
@@ -442,11 +403,21 @@ export default function MeetingDetail() {
   }
 
   // Which languages are ready, and whether one is being made right now.
+  // A translation started in another tab - or by a colleague - is still this
+  // meeting's job, so the page adopts it instead of pretending nothing is
+  // happening and offering to start it again.
   const refreshTranslations = useCallback(async () => {
     try {
       const state = await api.listTranslations(id);
       setReady(state.languages);
-      if (!state.in_progress) setTranslating(null);
+      setTranslating(state.in_progress ? (state.language ?? null) : null);
+      // Seeds the bar until the first live event arrives, which can be several
+      // seconds after the page opens.
+      setTranslateSeed(
+        state.in_progress
+          ? { percent: state.percent ?? 0, message: state.message ?? "Translating…" }
+          : null,
+      );
       return state;
     } catch {
       return null;
@@ -488,10 +459,22 @@ export default function MeetingDetail() {
     refreshTranslations();
   });
 
+  // Safety net: the SSE stream can drop (a proxy timeout, the API reloading),
+  // and a translation that finished while it was down would otherwise leave the
+  // bar spinning forever.
+  useEffect(() => {
+    if (!translating) return;
+    const poll = setInterval(refreshTranslations, 5000);
+    return () => clearInterval(poll);
+  }, [translating, refreshTranslations]);
+
   async function translateTo(target: TranscriptLanguage) {
     setLang(target);
     const ok = await run(() => api.translateTranscript(id, target), "Could not start the translation");
-    if (ok) setTranslating(target);
+    if (ok) {
+      setTranslating(target);
+      setTranslateSeed({ percent: 1, message: "Queued — waiting for a worker" });
+    }
   }
 
   async function deleteRecording() {
@@ -641,6 +624,17 @@ export default function MeetingDetail() {
         </div>
       </div>
 
+      <AgendaCard
+        agenda={meeting.agenda}
+        busy={busy}
+        onSave={(next) =>
+          run(async () => {
+            await api.updateMeeting(id, { agenda: next });
+            await load();
+          }, "Could not save the agenda")
+        }
+      />
+
       {suggestion && (
         <div className="alert alert-info compact-gap">
           <IconRepeat size={15} />
@@ -786,29 +780,30 @@ export default function MeetingDetail() {
 
       {speakers.length > 0 && (
         <div className="card">
-          <div className="card-head card-head-tight">
-            <h3>Speakers</h3>
+          <button
+            className="card-head card-head-tight collapse-head"
+            aria-expanded={showSpeakers}
+            onClick={() => setShowSpeakers((open) => !open)}
+          >
+            <h3>
+              <IconChevronDown size={13} className={`caret ${showSpeakers ? "open" : ""}`} />
+              Speakers <span className="count">{speakers.length}</span>
+            </h3>
             <span className="dim tiny">
-              {canRelabel
-                ? "Listen, then put a name to each voice — the name sticks and future meetings recognise it"
-                : `${speakers.length} detected`}
+              {showSpeakers
+                ? canRelabel
+                  ? "Put a name to each voice — the name sticks and future meetings recognise it"
+                  : `${speakers.length} detected`
+                : speakers
+                    .slice(0, 3)
+                    .map((p) => p.display_name)
+                    .join(", ") + (speakers.length > 3 ? ` +${speakers.length - 3}` : "")}
             </span>
-          </div>
-          <ul className="speaker-list">
-            {speakers.map((p) => {
-              const sample = samples[p.speaker_label];
-              const playing = playingSpeaker === p.speaker_label;
-              return (
+          </button>
+          {showSpeakers && (
+            <ul className="speaker-list">
+              {speakers.map((p) => (
                 <li key={p.speaker_label} className="speaker-row">
-                  <button
-                    className={`btn btn-sm btn-icon play-btn ${playing ? "is-playing" : ""}`}
-                    onClick={() => playSample(p.speaker_label)}
-                    disabled={!sample}
-                    aria-label={playing ? `Stop ${p.display_name}` : `Play a sample of ${p.display_name}`}
-                    title={sample ? "Play a few seconds of this voice" : "No recording available"}
-                  >
-                    {playing ? <IconPause size={14} /> : <IconPlay size={14} />}
-                  </button>
                   <span className="speaker-name">
                     <strong>{p.display_name}</strong>
                     <span className="dim tiny">
@@ -832,9 +827,9 @@ export default function MeetingDetail() {
                     </select>
                   )}
                 </li>
-              );
-            })}
-          </ul>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
@@ -868,9 +863,16 @@ export default function MeetingDetail() {
                   role="tab"
                   aria-selected={lang === code}
                   onClick={() => setLang(code)}
-                  title={ready.includes(code) ? `Translated into ${name}` : `Translate into ${name}`}
+                  title={
+                    translating === code
+                      ? `Being translated into ${name} now`
+                      : ready.includes(code)
+                        ? `Translated into ${name}`
+                        : `Translate into ${name}`
+                  }
                 >
                   {name}
+                  {translating === code && <span className="spinner sm" aria-label="translating now" />}
                   {!ready.includes(code) && translating !== code && (
                     <span className="dot-empty" aria-label="not translated yet" />
                   )}
@@ -901,16 +903,32 @@ export default function MeetingDetail() {
         <div className="card">
           {hasTranscript ? (
             <>
-              {lang !== "original" && (
-                <div className={`translation-bar ${translating === lang ? "is-working" : ""}`}>
-                  {translating === lang ? (
+              {/* Shown whichever language is on screen: a translation is a
+                  background job, and hiding it behind the right tab is how
+                  people end up unsure whether anything is running at all. */}
+              {(lang !== "original" || translating) && (
+                <div className={`translation-bar ${translating ? "is-working" : ""}`}>
+                  {translating ? (
                     <>
+                      <span className="spinner" aria-hidden="true" />
                       <span className="grow">
-                        {translateProgress?.message ?? "Translating…"} The original transcript is kept unchanged.
+                        {translateProgress?.message ??
+                          translateSeed?.message ??
+                          `Translating into ${TRANSCRIPT_LANGUAGES.find(([c]) => c === translating)?.[1]}…`}
+                        {" "}The original transcript is kept unchanged.
+                        <span className="bar bar-live translate-bar">
+                          <i
+                            style={{
+                              width: `${Math.max(translateProgress?.percent ?? translateSeed?.percent ?? 0, 3)}%`,
+                            }}
+                          />
+                        </span>
                       </span>
-                      <span className="dim small mono">{translateProgress?.percent ?? 0}%</span>
+                      <span className="dim small mono">
+                        {translateProgress?.percent ?? translateSeed?.percent ?? 0}%
+                      </span>
                     </>
-                  ) : translated ? (
+                  ) : lang === "original" ? null : translated ? (
                     <>
                       <span className="grow">
                         Translated into {TRANSCRIPT_LANGUAGES.find(([c]) => c === lang)?.[1]}
@@ -960,9 +978,17 @@ export default function MeetingDetail() {
                       className="ts ts-seek"
                       onClick={() => playFrom(s.start_ms)}
                       disabled={!audioSrc || audioFailed}
-                      title={audioSrc ? "Play the recording from here" : "No recording available"}
+                      title={
+                        isLive
+                          ? `${formatTimestamp(s.start_ms)} into the recording`
+                          : audioSrc
+                            ? "Play the recording from here"
+                            : "No recording available"
+                      }
                     >
-                      {formatTimestamp(s.start_ms)}
+                      {/* While it is still being recorded, the clock time is
+                          what tells people when something was said. */}
+                      {isLive ? clockAt(meeting.started_at, s.start_ms, true) : formatTimestamp(s.start_ms)}
                     </button>
                     <span className="who">{participant?.display_name ?? s.speaker_label}</span>
                     <span className={`lang ${mixed ? "mixed" : ""}`}>
@@ -1914,6 +1940,90 @@ function openActionItems(meetings: SeriesMeeting[]) {
     }
   }
   return [...open.values()];
+}
+
+/** The subject of the meeting: what it was called for.
+ *
+ *  Kept above the tabs, because it is the one thing that explains the minutes
+ *  underneath - and editable afterwards, since regenerating then writes them
+ *  against the corrected scope. */
+function AgendaCard({
+  agenda,
+  busy,
+  onSave,
+}: {
+  agenda: string | null;
+  busy: boolean;
+  onSave: (next: string | null) => Promise<boolean | undefined>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(agenda ?? "");
+
+  useEffect(() => {
+    setDraft(agenda ?? "");
+  }, [agenda]);
+
+  async function save() {
+    const ok = await onSave(draft.trim() || null);
+    if (ok !== false) setEditing(false);
+  }
+
+  if (!agenda && !editing) {
+    return (
+      <button className="link-btn agenda-add" onClick={() => setEditing(true)}>
+        <IconPlus size={13} />
+        Add a subject or agenda
+      </button>
+    );
+  }
+
+  return (
+    <div className="card agenda-card">
+      <div className="card-head card-head-tight">
+        <h3>Subject / agenda</h3>
+        {!editing && (
+          <button className="btn btn-sm" onClick={() => setEditing(true)} disabled={busy}>
+            <IconEdit size={13} />
+            Edit
+          </button>
+        )}
+      </div>
+      <div className="card-body">
+        {editing ? (
+          <>
+            <textarea
+              rows={4}
+              value={draft}
+              maxLength={4000}
+              autoFocus
+              placeholder={"Q3 budget sign-off\nVendor shortlist\nHiring plan for Ops"}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+            <p className="hint">
+              Regenerate the minutes afterwards to have them follow this.
+            </p>
+            <div className="card-actions">
+              <button
+                className="btn btn-sm"
+                onClick={() => {
+                  setDraft(agenda ?? "");
+                  setEditing(false);
+                }}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <button className="btn btn-sm btn-primary" onClick={save} disabled={busy}>
+                Save
+              </button>
+            </div>
+          </>
+        ) : (
+          <p className="agenda-text">{agenda}</p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function SeriesPanel({

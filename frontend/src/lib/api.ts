@@ -80,6 +80,7 @@ export interface User {
 export interface Meeting {
   id: string;
   title: string;
+  agenda: string | null;
   status: MeetingStatus;
   source: string;
   duration_seconds: number | null;
@@ -376,8 +377,12 @@ export const api = {
       "/api/meetings/stats/overview",
     ),
   audioUrl: (id: string) => request<{ url: string }>(`/api/meetings/${id}/audio-url`),
+  /** Edit a meeting's own details - its title or agenda. */
+  updateMeeting: (id: string, body: { title?: string; agenda?: string | null }) =>
+    request<Meeting>(`/api/meetings/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   createMeeting: (body: {
     title: string;
+    agenda?: string | null;
     source?: string;
     language_hint?: string | null;
     series_id?: string | null;
@@ -413,9 +418,14 @@ export const api = {
 
   /** Languages this transcript has been translated into, and any job running. */
   listTranslations: (id: string) =>
-    request<{ languages: TranscriptLanguage[]; in_progress: boolean; message: string | null }>(
-      `/api/meetings/${id}/transcript/translations`,
-    ),
+    request<{
+      languages: TranscriptLanguage[];
+      in_progress: boolean;
+      /** Which language is being made right now, when one is. */
+      language: TranscriptLanguage | null;
+      percent: number | null;
+      message: string | null;
+    }>(`/api/meetings/${id}/transcript/translations`),
   getTranslation: (id: string, language: TranscriptLanguage) =>
     request<TranscriptTranslation>(`/api/meetings/${id}/transcript?language=${language}`),
   /** Queues a translation; progress arrives on progressStream as "translate". */
@@ -549,6 +559,20 @@ export function formatDuration(seconds: number | null | undefined): string {
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
   return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+/** Wall-clock time of a point in a recording, e.g. "14:32".
+ *
+ *  A live transcript is read while the meeting is still happening, so "08:12"
+ *  into the recording answers the wrong question - people want to know when
+ *  something was said, not how far in. `seconds` adds them for a live line. */
+export function clockAt(startedAt: string, ms: number, seconds = false): string {
+  const at = new Date(new Date(startedAt).getTime() + ms);
+  return at.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(seconds ? { second: "2-digit" } : {}),
+  });
 }
 
 export function formatTimestamp(ms: number): string {

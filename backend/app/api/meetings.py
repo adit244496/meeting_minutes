@@ -24,6 +24,7 @@ from app.schemas import (
     MeetingCreate,
     MeetingDetail,
     MeetingOut,
+    MeetingUpdate,
     RelabelRequest,
 )
 from app.worker.tasks import harvest_voiceprint_task, process_meeting_task
@@ -65,6 +66,7 @@ def create_meeting(
 
     meeting = Meeting(
         title=payload.title,
+        agenda=(payload.agenda or "").strip() or None,
         source=payload.source,
         language_hint=payload.language_hint,
         asr_provider=payload.asr_provider,
@@ -74,6 +76,33 @@ def create_meeting(
     )
     db.add(meeting)
     db.commit()
+    return meeting
+
+
+@router.patch("/{meeting_id}", response_model=MeetingOut)
+def update_meeting(
+    meeting_id: uuid.UUID,
+    payload: MeetingUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> Meeting:
+    """Edit the title or the agenda.
+
+    The agenda is worth changing after the fact: what a meeting turned out to
+    be about is often clearer once it has happened, and regenerating the
+    minutes then writes them against the corrected scope.
+    """
+    meeting = access.load_meeting(db, meeting_id, user)
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields to update")
+
+    if "title" in changes and changes["title"]:
+        meeting.title = changes["title"].strip()
+    if "agenda" in changes:
+        meeting.agenda = (changes["agenda"] or "").strip() or None
+    db.commit()
+    db.refresh(meeting)
     return meeting
 
 

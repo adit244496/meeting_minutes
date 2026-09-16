@@ -142,6 +142,8 @@ def _ensure_columns() -> None:
         # Department-level access. Nullable on purpose: every meeting that
         # predates departments stays unassigned, which means administrators and
         # its creator only - see app/access.py.
+        ("meetings", "agenda",
+         "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS agenda TEXT"),
         ("meetings", "department_id",
          "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS department_id UUID "
          "REFERENCES departments(id) ON DELETE SET NULL"),

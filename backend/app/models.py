@@ -174,6 +174,9 @@ class Meeting(Base):
     series_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("meeting_series.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # What the meeting is for, in the organiser's own words. Written before it
+    # happens, and given to the minutes writer as the intended scope.
+    agenda: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Who may see this meeting. NULL means nobody but admins and its creator -
     # which is what meetings recorded before departments existed inherit.
     department_id: Mapped[uuid.UUID | None] = mapped_column(

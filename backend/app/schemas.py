@@ -99,6 +99,9 @@ class VoiceprintOut(ORMModel):
 
 class MeetingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=512)
+    # What the meeting is for. Shown on the page and given to the minutes
+    # writer, so the summary is written against the intended scope.
+    agenda: str | None = Field(default=None, max_length=4000)
     source: AudioSource = AudioSource.upload
     # Leave null for mixed-language meetings; forcing one language is what
     # produces garbage transliteration on code-switched speech.
@@ -148,9 +151,17 @@ class SegmentOut(ORMModel):
     text: str
 
 
+class MeetingUpdate(BaseModel):
+    """Editing a meeting's own details - not its content."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=512)
+    agenda: str | None = Field(default=None, max_length=4000)
+
+
 class MeetingOut(ORMModel):
     id: uuid.UUID
     title: str
+    agenda: str | None = None
     status: MeetingStatus
     source: AudioSource
     duration_seconds: float | None
