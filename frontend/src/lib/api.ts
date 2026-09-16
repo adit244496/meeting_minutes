@@ -425,6 +425,10 @@ export const api = {
       language: TranscriptLanguage | null;
       percent: number | null;
       message: string | null;
+      age_seconds: number | null;
+      /** Queued, but no worker has taken it - a stopped worker looks exactly
+       *  like a slow one from here, so the server says which it is. */
+      unclaimed: boolean;
     }>(`/api/meetings/${id}/transcript/translations`),
   getTranslation: (id: string, language: TranscriptLanguage) =>
     request<TranscriptTranslation>(`/api/meetings/${id}/transcript?language=${language}`),

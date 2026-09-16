@@ -108,6 +108,7 @@ export default function MeetingDetail() {
   const [ready, setReady] = useState<TranscriptLanguage[]>([]);
   const [translating, setTranslating] = useState<TranscriptLanguage | null>(null);
   const [translateSeed, setTranslateSeed] = useState<{ percent: number; message: string } | null>(null);
+  const [translateStuck, setTranslateStuck] = useState<number | null>(null);
 
   // A few seconds of each voice, so a listener can put a name to it.
   // Collapsed by default: the list matters when somebody is naming voices, and
@@ -418,6 +419,7 @@ export default function MeetingDetail() {
           ? { percent: state.percent ?? 0, message: state.message ?? "Translating…" }
           : null,
       );
+      setTranslateStuck(state.unclaimed ? (state.age_seconds ?? 0) : null);
       return state;
     } catch {
       return null;
@@ -474,6 +476,7 @@ export default function MeetingDetail() {
     if (ok) {
       setTranslating(target);
       setTranslateSeed({ percent: 1, message: "Queued — waiting for a worker" });
+      setTranslateStuck(null);
     }
   }
 
@@ -907,8 +910,32 @@ export default function MeetingDetail() {
                   background job, and hiding it behind the right tab is how
                   people end up unsure whether anything is running at all. */}
               {(lang !== "original" || translating) && (
-                <div className={`translation-bar ${translating ? "is-working" : ""}`}>
-                  {translating ? (
+                <div
+                  className={`translation-bar ${translating ? "is-working" : ""} ${
+                    translateStuck !== null ? "is-stuck" : ""
+                  }`}
+                >
+                  {translating && translateStuck !== null ? (
+                    // Queued, but nothing has taken it. Waiting longer will not
+                    // help, so say what is actually wrong.
+                    <>
+                      <IconAlert size={15} />
+                      <span className="grow">
+                        Waiting for the background worker — nothing has picked this up in{" "}
+                        {Math.round(translateStuck)}s. It is either busy with another meeting, or the
+                        worker service has stopped. An administrator can check it with{" "}
+                        <code>systemctl status meeting_minutes_worker</code>.
+                      </span>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => translating && translateTo(translating)}
+                        disabled={busy}
+                      >
+                        <IconRefresh size={13} />
+                        Try again
+                      </button>
+                    </>
+                  ) : translating ? (
                     <>
                       <span className="spinner" aria-hidden="true" />
                       <span className="grow">

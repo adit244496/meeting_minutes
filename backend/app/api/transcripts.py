@@ -24,6 +24,10 @@ LANGUAGE = Query(pattern="^(en|bn|hi)$", description="en | bn | hi")
 
 # A translation reports every batch; longer silence means the worker died.
 STALE_SECONDS = 5 * 60
+# The API publishes "queued" itself, so that event proves nothing about the
+# worker. This long without the worker replacing it means nothing picked the
+# job up - the worker is stopped, or it is busy with an earlier meeting.
+UNCLAIMED_SECONDS = 45
 
 
 @router.get("/{meeting_id}/transcript/translations")
@@ -37,6 +41,8 @@ def list_translations(
     state = progress.last_state(str(meeting_id)) or {}
     quiet = progress.seconds_since_update(str(meeting_id))
     running = state.get("stage") == "translate" and quiet is not None and quiet < STALE_SECONDS
+    # Still on the event the API published when it queued the job.
+    queued = running and int(state.get("percent") or 0) <= 1
     return {
         "languages": transcripts.existing(db, meeting_id),
         "in_progress": running,
@@ -45,6 +51,11 @@ def list_translations(
         "language": state.get("language") if running else None,
         "percent": state.get("percent") if running else None,
         "message": state.get("message") if running else None,
+        "age_seconds": round(quiet) if running and quiet is not None else None,
+        # "Nothing has picked this up", which looks identical to "working on it"
+        # from the browser and is the difference between waiting and calling an
+        # administrator.
+        "unclaimed": bool(queued and quiet is not None and quiet > UNCLAIMED_SECONDS),
     }
 
 

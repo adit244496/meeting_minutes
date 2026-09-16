@@ -360,6 +360,8 @@ pg_dump -Fc meeting_minutes > meeting_minutes_$(date +%F).dump
 | `413 Request Entity Too Large` on upload | Only once nginx is in front: `client_max_body_size` defaults to 1 MB |
 | Progress bar never moves, then jumps to done | Only behind nginx: SSE buffered; check `proxy_buffering off` |
 | Meeting stays "uploaded" forever | The worker is not running — `systemctl status meeting_minutes_worker` |
+| Translation stuck at "Queued — waiting for a worker" | Same cause. After 45s the page says so itself. The job is not lost: restart the worker and it runs |
+| Worker was restarted but still runs the old code | `systemctl restart` on the wrong unit name silently does nothing useful — check `journalctl -u meeting_minutes_worker -n 5` for a recent start line |
 | Service starts then exits immediately | Usually `.env` — systemd is stricter about quoting than a shell |
 | Uploads fail, worker logs `ffmpeg not found on PATH` | `sudo apt install -y ffmpeg` |
 | `permission denied` writing recordings | `LOCAL_STORAGE_DIR` does not exist or is not owned by `srvadmin` |

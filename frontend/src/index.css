@@ -1761,6 +1761,17 @@ body { background: var(--bg); }
 /* A thin bar under the message: batches report every few seconds, and without
    something moving in between, a running job looks like a stuck one. */
 .translate-bar { display: block; margin-top: 6px; height: 4px; }
+/* Queued with nothing to run it: not progress, a fault. */
+.translation-bar.is-stuck {
+  background: var(--err-soft); color: var(--text);
+  border-bottom-color: color-mix(in srgb, var(--err) 35%, transparent);
+}
+.translation-bar.is-stuck svg { color: var(--err); flex: none; }
+.translation-bar code {
+  font-family: var(--font-mono); font-size: 0.8rem;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  padding: 1px 5px; border-radius: 4px; white-space: nowrap;
+}
 
 /* Something that turns while a background job runs. */
 .spinner {
