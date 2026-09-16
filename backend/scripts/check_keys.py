@@ -8,11 +8,26 @@ key, wrong provider selected" is not visible from the error the browser shows.
 
     cd backend && venv/bin/python scripts/check_keys.py
 
-Never prints a key: only its source, length, and last four characters.
+"Is the key I pasted the key that got stored?" is a different question, and
+--fingerprint answers it. It prints a short hash of each stored key, and with
+--compare hashes a key you paste in the same way, so two keys can be checked
+for being identical without either one being displayed:
+
+    venv/bin/python scripts/check_keys.py --fingerprint
+    venv/bin/python scripts/check_keys.py --compare      # paste the key, press enter
+
+Matching fingerprints mean the stored key is character-for-character the one
+you have, and the provider is rejecting the key itself. Different fingerprints
+mean something went wrong between the clipboard and the database.
+
+Never prints a key: only its source, length, last four characters, and a hash
+that cannot be reversed.
 """
 
 from __future__ import annotations
 
+import getpass
+import hashlib
 import sys
 from pathlib import Path
 
@@ -79,9 +94,52 @@ LIVE = {
 }
 
 
+def fingerprint(value: str) -> str:
+    """A short, irreversible hash. Salted with a constant so a fingerprint from
+    this tool cannot be matched against a hash from anywhere else."""
+    return hashlib.sha256(f"neo-minutes/fingerprint/{value}".encode()).hexdigest()[:12]
+
+
+def show_fingerprints(db) -> int:
+    print("Fingerprints of the keys as stored. Compare with --compare.\n")
+    for key, name in CHECKS.items():
+        value = credentials.resolve(db, key)
+        if not value:
+            print(f"{name:<16} no key")
+            continue
+        # Only the fixed, public part of the prefix - never a secret character.
+        # The provider's own console shows the last few, so prefix + last four
+        # is enough to identify a key there without revealing anything here.
+        head = next(
+            (p for p in ("sk-ant-api03-", "sk-proj-", "sk-ant-", "AIza", "AQ.", "sk-") if value.startswith(p)),
+            "",
+        )
+        print(f"{name:<16} {fingerprint(value)}   {head}…{value[-4:]}  {len(value)} chars")
+    return 0
+
+
+def compare() -> int:
+    pasted = getpass.getpass("Paste the key you believe is correct (hidden): ").strip()
+    if not pasted:
+        print("Nothing pasted.")
+        return 2
+    print(f"\nThat key's fingerprint: {fingerprint(pasted)}   {len(pasted)} chars")
+    print("Same fingerprint as the stored one  -> the key was saved exactly as pasted,")
+    print("                                       and the provider is rejecting it.")
+    print("Different                          -> the wrong key is stored; re-enter it")
+    print("                                       under Settings > AI providers.")
+    return 0
+
+
 def main() -> int:
+    if "--compare" in sys.argv:
+        return compare()
+
     db = SessionLocal()
     try:
+        if "--fingerprint" in sys.argv:
+            return show_fingerprints(db)
+
         status = {s.key: s for s in credentials.describe(db)}
         asr = credentials.resolve(db, "asr_provider") or "gemini"
         minutes = credentials.resolve(db, "minutes_provider") or "anthropic"
