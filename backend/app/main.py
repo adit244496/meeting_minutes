@@ -75,6 +75,20 @@ def _check_ffmpeg() -> None:
     )
 
 
+def _add_constraint(table: str, name: str, definition: str) -> str:
+    """ADD CONSTRAINT that shrugs at a constraint which is already there.
+
+    Postgres has no ADD CONSTRAINT IF NOT EXISTS. It raises duplicate_object for
+    a constraint of that name, or duplicate_table when an index already owns the
+    name - both mean "already applied", which must not stop the app booting.
+    """
+    return (
+        "DO $$ BEGIN "
+        f"ALTER TABLE {table} ADD CONSTRAINT {name} {definition}; "
+        "EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$"
+    )
+
+
 def _ensure_columns() -> None:
     """Add columns that shipped after a database was first created.
 
@@ -133,6 +147,14 @@ def _ensure_columns() -> None:
                 )
             )
         }
+        # Constraints are checked separately from columns. A database can hold
+        # any mixture of the two: `create_all` builds a missing table complete
+        # with its constraints, while an existing table gets neither - so a
+        # server upgrading from an older release had the new minutes_versions
+        # table (constraint and all) beside an old minutes table.
+        constraints = {
+            row.conname for row in conn.execute(text("SELECT conname FROM pg_constraint"))
+        }
 
     pending = [ddl for table, column, ddl in migrations if (table, column) not in columns]
     if ("meetings", "series_id") not in columns:
@@ -146,16 +168,27 @@ def _ensure_columns() -> None:
     # become "detailed".
     # Each group runs in one transaction, so a multi-step change is all or nothing.
     groups: list[list[str]] = [[ddl] for ddl in pending]
-    if ("minutes", "kind") not in columns:
+    if ("minutes", "kind") not in columns or ("minutes_versions", "kind") not in columns:
         groups.append([
             "ALTER TABLE minutes ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'detailed'",
             "ALTER TABLE minutes_versions ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'detailed'",
+        ])
+    if "uq_minutes_meeting_kind" not in constraints:
+        groups.append([
+            # Was a unique index on meeting_id alone, which allowed only one set
+            # of minutes per meeting.
             "DROP INDEX IF EXISTS ix_minutes_meeting_id",
             "CREATE INDEX IF NOT EXISTS ix_minutes_meeting_id ON minutes (meeting_id)",
-            "ALTER TABLE minutes ADD CONSTRAINT uq_minutes_meeting_kind UNIQUE (meeting_id, kind)",
+            _add_constraint("minutes", "uq_minutes_meeting_kind", "UNIQUE (meeting_id, kind)"),
+        ])
+    if "uq_minutes_versions_meeting_kind_version" not in constraints:
+        groups.append([
             "ALTER TABLE minutes_versions DROP CONSTRAINT IF EXISTS minutes_versions_meeting_id_version_key",
-            "ALTER TABLE minutes_versions ADD CONSTRAINT uq_minutes_versions_meeting_kind_version "
-            "UNIQUE (meeting_id, kind, version)",
+            _add_constraint(
+                "minutes_versions",
+                "uq_minutes_versions_meeting_kind_version",
+                "UNIQUE (meeting_id, kind, version)",
+            ),
         ])
 
     for group in groups:
