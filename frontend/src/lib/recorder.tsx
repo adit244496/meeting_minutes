@@ -27,6 +27,7 @@ export interface StartOptions {
   language_hint: string | null;
   series_id: string | null;
   new_series_name: string | null;
+  department_id: string | null;
 }
 
 interface RecorderValue {

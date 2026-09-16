@@ -20,7 +20,7 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import storage
+from app import access, storage
 from app.db import get_db
 from app.deps import current_user
 from app.models import Meeting, Minutes, Participant, Segment, User
@@ -36,14 +36,18 @@ def export_meetings(
     kind: str = Query(pattern="^(transcript|minutes|both)$"),
     days: int = Query(default=7, ge=0, le=3650, description="Look-back window; 0 = all time"),
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ):
     """Every transcript and/or set of minutes from a timeframe, as one ZIP.
 
     One file per meeting, in the same format as the single-meeting download,
-    so the archive is readable without any tooling.
+    so the archive is readable without any tooling. Only the meetings this
+    person could open one at a time go into it.
     """
     query = select(Meeting).order_by(Meeting.started_at.desc())
+    allowed = access.visible_clause(user)
+    if allowed is not None:
+        query = query.where(allowed)
     if days:
         query = query.where(Meeting.started_at >= datetime.now(timezone.utc) - timedelta(days=days))
     meetings = list(db.execute(query).scalars())
@@ -122,11 +126,8 @@ def _attachment(content: str | bytes, filename: str, media_type: str) -> Respons
     )
 
 
-def _load(db: Session, meeting_id: uuid.UUID) -> Meeting:
-    meeting = db.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
-    return meeting
+def _load(db: Session, meeting_id: uuid.UUID, user: User) -> Meeting:
+    return access.load_meeting(db, meeting_id, user)
 
 
 def _segments(db: Session, meeting_id: uuid.UUID) -> list[Segment]:
@@ -160,9 +161,9 @@ def download_transcript(
     meeting_id: uuid.UUID,
     fmt: str = Query(default="txt", pattern="^(txt|json|srt|docx)$"),
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ):
-    meeting = _load(db, meeting_id)
+    meeting = _load(db, meeting_id, user)
     rows = _segments(db, meeting_id)
     if not rows:
         detail = (
@@ -504,9 +505,9 @@ def download_minutes(
     fmt: str = Query(default="docx", pattern="^(md|json|docx)$"),
     kind: str = Query(default="short", pattern="^(short|detailed)$"),
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ):
-    meeting = _load(db, meeting_id)
+    meeting = _load(db, meeting_id, user)
     minutes = db.execute(
         select(Minutes).where(Minutes.meeting_id == meeting_id, Minutes.kind == kind)
     ).scalar_one_or_none()
@@ -552,9 +553,9 @@ def download_minutes(
 def download_audio(
     meeting_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ):
-    meeting = _load(db, meeting_id)
+    meeting = _load(db, meeting_id, user)
     if not meeting.audio_key:
         detail = (
             "The recording was deleted under the retention policy"

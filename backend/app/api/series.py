@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app import access
 from app.db import get_db
 from app.deps import current_user
 from app.models import Meeting, MeetingSeries, Minutes, User
@@ -54,18 +55,29 @@ def series_name_from_title(title: str) -> str:
     return (text[:1].upper() + text[1:]) if text else title.strip()
 
 
-def _series_out(db: Session, series: MeetingSeries) -> SeriesOut:
-    count, last = db.execute(
-        select(func.count(Meeting.id), func.max(Meeting.started_at)).where(Meeting.series_id == series.id)
-    ).one()
+def _series_out(db: Session, series: MeetingSeries, user: User) -> SeriesOut:
+    query = select(func.count(Meeting.id), func.max(Meeting.started_at)).where(
+        Meeting.series_id == series.id
+    )
+    allowed = access.visible_clause(user)
+    if allowed is not None:
+        query = query.where(allowed)
+    count, last = db.execute(query).one()
     return SeriesOut(id=series.id, name=series.name, meeting_count=count, last_meeting_at=last)
 
 
 @router.get("/series", response_model=list[SeriesOut])
-def list_series(db: Session = Depends(get_db), _: User = Depends(current_user)) -> list[SeriesOut]:
+def list_series(db: Session = Depends(get_db), user: User = Depends(current_user)) -> list[SeriesOut]:
+    # The counts are per-viewer: the access filter goes in the join condition,
+    # not the WHERE clause, so a series whose meetings are all in another
+    # department still appears - empty - rather than vanishing from the picker.
+    on = Meeting.series_id == MeetingSeries.id
+    allowed = access.visible_clause(user)
+    if allowed is not None:
+        on = on & allowed
     rows = db.execute(
         select(MeetingSeries, func.count(Meeting.id), func.max(Meeting.started_at))
-        .outerjoin(Meeting, Meeting.series_id == MeetingSeries.id)
+        .outerjoin(Meeting, on)
         .group_by(MeetingSeries.id)
         .order_by(func.max(Meeting.started_at).desc().nullslast(), MeetingSeries.name)
     ).all()
@@ -103,9 +115,7 @@ def assign_series(
     `include_meeting_ids` pulls earlier look-alike meetings in at the same time,
     which is how accepting a suggestion groups the whole history in one step.
     """
-    meeting = db.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
+    meeting = access.load_meeting(db, meeting_id, user)
 
     if payload.new_series_name:
         series = create_series(db, payload.new_series_name, user)
@@ -118,9 +128,13 @@ def assign_series(
 
     meeting.series_id = series.id if series else None
     if series and payload.include_meeting_ids:
-        for other in db.execute(
-            select(Meeting).where(Meeting.id.in_(payload.include_meeting_ids))
-        ).scalars():
+        others = select(Meeting).where(Meeting.id.in_(payload.include_meeting_ids))
+        # Silently skip meetings from other departments rather than failing the
+        # whole call: the list comes from a suggestion, not a deliberate choice.
+        allowed = access.visible_clause(user)
+        if allowed is not None:
+            others = others.where(allowed)
+        for other in db.execute(others).scalars():
             other.series_id = series.id
 
     db.commit()
@@ -132,12 +146,10 @@ def assign_series(
 def series_suggestion(
     meeting_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
     """Earlier meetings whose title looks like the same recurring meeting."""
-    meeting = db.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
+    meeting = access.load_meeting(db, meeting_id, user)
     if meeting.series_id:
         return {"suggest": False}
 
@@ -145,10 +157,12 @@ def series_suggestion(
     if len(key) < 3:
         return {"suggest": False}
 
+    query = select(Meeting).where(Meeting.id != meeting.id)
+    allowed = access.visible_clause(user)
+    if allowed is not None:
+        query = query.where(allowed)
     candidates = db.execute(
-        select(Meeting)
-        .where(Meeting.id != meeting.id)
-        .options(selectinload(Meeting.series))
+        query.options(selectinload(Meeting.series))
         .order_by(Meeting.started_at.desc())
         .limit(500)
     ).scalars()
@@ -172,7 +186,7 @@ def series_suggestion(
 def series_meetings(
     series_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
     """Every meeting in the series, newest first, with its minutes for comparison.
 
@@ -183,11 +197,12 @@ def series_meetings(
     if series is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Series not found")
 
+    query = select(Meeting).where(Meeting.series_id == series_id)
+    allowed = access.visible_clause(user)
+    if allowed is not None:
+        query = query.where(allowed)
     meetings = db.execute(
-        select(Meeting)
-        .where(Meeting.series_id == series_id)
-        .options(selectinload(Meeting.minutes))
-        .order_by(Meeting.started_at.desc())
+        query.options(selectinload(Meeting.minutes)).order_by(Meeting.started_at.desc())
     ).scalars().all()
 
     items = []
@@ -215,7 +230,7 @@ def series_meetings(
             }
         )
 
-    return {"series": _series_out(db, series).model_dump(mode="json"), "meetings": items}
+    return {"series": _series_out(db, series, user).model_dump(mode="json"), "meetings": items}
 
 
 @router.patch("/series/{series_id}", response_model=SeriesOut)
@@ -223,7 +238,7 @@ def rename_series(
     series_id: uuid.UUID,
     payload: dict,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> SeriesOut:
     series = db.get(MeetingSeries, series_id)
     if series is None:
@@ -233,4 +248,4 @@ def rename_series(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Give the series a name")
     series.name = name[:255]
     db.commit()
-    return _series_out(db, series)
+    return _series_out(db, series, user)

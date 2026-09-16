@@ -56,12 +56,23 @@ export type MeetingStatus =
   | "completed"
   | "failed";
 
+export interface DepartmentBrief {
+  id: string;
+  name: string;
+}
+
+export interface Department extends DepartmentBrief {
+  member_count: number;
+  meeting_count: number;
+}
+
 export interface User {
   id: string;
   email: string;
   full_name: string;
   role: Role;
   is_active: boolean;
+  departments: DepartmentBrief[];
   voiceprint_count?: number;
   enrolled_seconds?: number;
 }
@@ -82,6 +93,8 @@ export interface Meeting {
   minutes_deleted_at: string | null;
   series_id: string | null;
   series_name: string | null;
+  department_id: string | null;
+  department_name: string | null;
   is_live: boolean;
   live_transcribed_until: number | null;
   has_recording: boolean;
@@ -323,8 +336,32 @@ export const api = {
   me: () => request<User>("/api/auth/me"),
 
   listUsers: () => request<User[]>("/api/users"),
-  createUser: (body: { email: string; full_name: string; password?: string; role: Role }) =>
-    request<User>("/api/users", { method: "POST", body: JSON.stringify(body) }),
+  createUser: (body: {
+    email: string;
+    full_name: string;
+    password?: string;
+    role: Role;
+    department_ids?: string[];
+  }) => request<User>("/api/users", { method: "POST", body: JSON.stringify(body) }),
+  /** Admin only: replaces every department this person belongs to. */
+  setUserDepartments: (userId: string, departmentIds: string[]) =>
+    request<User>(`/api/users/${userId}/departments`, {
+      method: "PUT",
+      body: JSON.stringify({ department_ids: departmentIds }),
+    }),
+
+  listDepartments: () => request<Department[]>("/api/departments"),
+  createDepartment: (name: string) =>
+    request<Department>("/api/departments", { method: "POST", body: JSON.stringify({ name }) }),
+  renameDepartment: (id: string, name: string) =>
+    request<Department>(`/api/departments/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  deleteDepartment: (id: string) => request<void>(`/api/departments/${id}`, { method: "DELETE" }),
+  /** Moves a meeting between departments; null leaves it unassigned. */
+  assignDepartment: (meetingId: string, departmentId: string | null) =>
+    request<Meeting>(`/api/meetings/${meetingId}/department`, {
+      method: "PUT",
+      body: JSON.stringify({ department_id: departmentId }),
+    }),
   enrollVoice: (userId: string, file: File) => {
     const form = new FormData();
     form.append("file", file);
@@ -345,6 +382,7 @@ export const api = {
     language_hint?: string | null;
     series_id?: string | null;
     new_series_name?: string | null;
+    department_id?: string | null;
   }) => request<Meeting>("/api/meetings", { method: "POST", body: JSON.stringify(body) }),
 
   listSeries: () => request<Series[]>("/api/series"),

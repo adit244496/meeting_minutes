@@ -6,13 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import progress
+from app import access, progress
 from app.db import get_db
 from app.deps import current_user
 from app.minutes import catalog
 from app.minutes import versions as versions_store
 from app.minutes.generate import LANGUAGE_NAMES
-from app.models import Meeting, MeetingStatus, Minutes, MinutesVersion, Segment, User
+from app.models import MeetingStatus, Minutes, MinutesVersion, Segment, User
 from app.schemas import MinutesOut, MinutesUpdate, MinutesVersionOut
 from app.worker.tasks import generate_minutes_task
 
@@ -25,7 +25,10 @@ MINUTES_STALE_SECONDS = 5 * 60
 KIND = Query(default="short", pattern="^(short|detailed)$", description="short | detailed")
 
 
-def _current_minutes(db: Session, meeting_id: uuid.UUID, kind: str) -> Minutes:
+def _current_minutes(db: Session, meeting_id: uuid.UUID, kind: str, user: User) -> Minutes:
+    # The department check comes first, so a meeting somebody may not see
+    # answers the same way whether or not its minutes exist.
+    access.load_meeting(db, meeting_id, user)
     minutes = db.execute(
         select(Minutes).where(Minutes.meeting_id == meeting_id, Minutes.kind == kind)
     ).scalar_one_or_none()
@@ -39,9 +42,9 @@ def get_minutes(
     meeting_id: uuid.UUID,
     kind: str = KIND,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ):
-    return _current_minutes(db, meeting_id, kind)
+    return _current_minutes(db, meeting_id, kind, user)
 
 
 @router.post("/{meeting_id}/minutes", status_code=status.HTTP_202_ACCEPTED)
@@ -55,7 +58,7 @@ def regenerate_minutes(
     ),
     kind: str = KIND,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
     """Queue minutes generation from the existing transcript.
 
@@ -65,9 +68,7 @@ def regenerate_minutes(
     speaker names or to produce the minutes in another language. Any
     hand-edited version stays in the history and can be restored.
     """
-    meeting = db.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
+    meeting = access.load_meeting(db, meeting_id, user)
     has_transcript = db.execute(
         select(Segment.id).where(Segment.meeting_id == meeting_id).limit(1)
     ).first()
@@ -107,9 +108,11 @@ def regenerate_minutes(
 @router.get("/{meeting_id}/progress")
 def current_progress(
     meeting_id: uuid.UUID,
-    _: User = Depends(current_user),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> dict:
     """The last progress event, so a reloaded page can pick up a running job."""
+    access.load_meeting(db, meeting_id, user)
     state = progress.last_state(str(meeting_id)) or {}
     return {**state, "age_seconds": progress.seconds_since_update(str(meeting_id))}
 
@@ -127,7 +130,7 @@ def edit_minutes(
     The previous state is already in the history, and this edit is appended to
     it, so regenerating later never loses what somebody wrote.
     """
-    minutes = _current_minutes(db, meeting_id, kind)
+    minutes = _current_minutes(db, meeting_id, kind, user)
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields to update")
@@ -140,9 +143,10 @@ def list_minutes_versions(
     meeting_id: uuid.UUID,
     kind: str = KIND,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ):
     """Every version, newest first. The first entry is the current one."""
+    access.load_meeting(db, meeting_id, user)
     rows = versions_store.list_versions(db, meeting_id, kind)
     author_ids = {v.created_by for v in rows if v.created_by}
     names = (
@@ -167,7 +171,7 @@ def restore_minutes_version(
     user: User = Depends(current_user),
 ):
     """Make an earlier version current again, as a new version."""
-    minutes = _current_minutes(db, meeting_id, kind)
+    minutes = _current_minutes(db, meeting_id, kind, user)
     target = db.execute(
         select(MinutesVersion).where(
             MinutesVersion.meeting_id == meeting_id,

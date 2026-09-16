@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from app import features, live, progress, storage
+from app import access, features, live, progress, storage
 from app.db import get_db
 from app.deps import current_user
 from app.models import Meeting, MeetingStatus, User
@@ -20,21 +20,18 @@ router = APIRouter(prefix="/api/meetings", tags=["live"])
 MAX_CHUNK_BYTES = 20 * 1024 * 1024
 
 
-def _live_meeting(db: Session, meeting_id: uuid.UUID) -> Meeting:
-    meeting = db.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
-    return meeting
+def _live_meeting(db: Session, meeting_id: uuid.UUID, user: User) -> Meeting:
+    return access.load_meeting(db, meeting_id, user)
 
 
 @router.post("/{meeting_id}/live/start")
 def start_live(
     meeting_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
     """Begin a live recording. Returns whether live transcription is on."""
-    meeting = _live_meeting(db, meeting_id)
+    meeting = _live_meeting(db, meeting_id, user)
     if meeting.audio_key or meeting.status not in (MeetingStatus.created,):
         raise HTTPException(status.HTTP_409_CONFLICT, "This meeting already has a recording")
 
@@ -55,14 +52,14 @@ async def live_chunk(
     seq: int = Query(ge=0),
     ext: str = Query(default="webm", pattern="^(webm|mp4|ogg)$"),
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
     """Append the next piece of audio. The body is the raw blob.
 
     Answers 409 with the expected sequence number when a piece is missing, so
     the browser resends from there.
     """
-    meeting = _live_meeting(db, meeting_id)
+    meeting = _live_meeting(db, meeting_id, user)
     if not meeting.is_live:
         raise HTTPException(status.HTTP_409_CONFLICT, "This meeting is not recording live")
 
@@ -87,7 +84,7 @@ async def live_chunk(
 def finish_live(
     meeting_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> Meeting:
     """Stop a live recording from the server's copy of the audio.
 
@@ -96,7 +93,7 @@ def finish_live(
     received up to the last piece (at most ~30 s short of the end), which is far
     better than losing the meeting.
     """
-    meeting = _live_meeting(db, meeting_id)
+    meeting = _live_meeting(db, meeting_id, user)
     if not meeting.is_live:
         raise HTTPException(status.HTTP_409_CONFLICT, "This meeting is not recording")
 
@@ -125,11 +122,11 @@ def finish_live(
 def stop_live(
     meeting_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
     """End the live phase. The browser then uploads the complete recording,
     which the normal pipeline turns into the final transcript."""
-    meeting = _live_meeting(db, meeting_id)
+    meeting = _live_meeting(db, meeting_id, user)
     meeting.is_live = False
     db.commit()
     live.stop(str(meeting_id))

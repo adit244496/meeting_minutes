@@ -402,12 +402,46 @@ handles real meetings:
 - **The SSE progress endpoint is unauthenticated.** `EventSource` cannot set an
   `Authorization` header. It leaks only stage/percent for a UUID the caller must
   already know, but move it behind a short-lived signed query token.
-- **All authenticated users can read all meetings.** There is no per-meeting ACL.
-  Meeting minutes are often confidential — add one before rollout.
+- **Departments decide who reads what** — see below. What is still missing is
+  sharing a single meeting across two departments, and any per-meeting ACL
+  finer than that.
 - **CORS** is open to `localhost:5173`. Tighten to your real origin.
 - **Audio leaves your infrastructure** when it goes to a hosted ASR provider.
   Confirm that matches your compliance posture; if not, the provider seam is where
   you swap in a self-hosted model.
+
+### Departments
+
+Access control is one rule, in `app/access.py`, and every endpoint that touches a
+meeting goes through it:
+
+- administrators see everything;
+- everybody else sees the meetings of the departments they belong to, plus the
+  meetings they recorded themselves;
+- a meeting with **no** department is private to its creator and the admins.
+
+Somebody can be in several departments; a meeting is in exactly one. That last
+clause is what makes this safe to switch on an existing install: every meeting
+recorded before departments existed has `department_id = NULL`, so nothing is
+handed to a department by accident — an administrator assigns them under
+**Settings → Departments**, and the People table there shows who is in what.
+
+A meeting takes its department from whoever created it: their one department if
+they have exactly one, otherwise whatever they chose on the meetings page (and
+nothing, if they chose nothing). Members can only file a meeting into a
+department they are themselves in, and only an administrator can leave a meeting
+unassigned, since that would hide a colleague's meeting from the rest of the team.
+
+Deleting a department does not delete its meetings; they fall back to unassigned,
+which means administrators and their creators. Removing somebody from a
+department takes effect on their next request — nothing about departments is
+baked into the session token.
+
+Two endpoints are authorised by a signed URL rather than the session, because
+`<audio src>` cannot send a header: the recording stream and the per-speaker
+voice sample. Both check the department when the token is *issued*
+(`/audio-url`, `/speakers/samples`), and the token is scoped to one meeting and
+expires in 15 minutes.
 
 ---
 

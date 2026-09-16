@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
 
 import { CompanyLogo } from "../components/CompanyLogo";
 import { Menu } from "../components/Menu";
@@ -12,6 +12,7 @@ import {
   IconPlay,
   IconRepeat,
   IconSearch,
+  IconShield,
   IconStop,
   IconUpload,
 } from "../components/icons";
@@ -19,9 +20,11 @@ import {
   api,
   formatDuration,
   formatTimestamp,
+  type Department,
   type Meeting,
   type MeetingDetail,
   type Series,
+  type User,
   useMeetingProgress,
 } from "../lib/api";
 import { formatElapsed, micSupport, useRecorder } from "../lib/recorder";
@@ -64,6 +67,12 @@ function MeetingRow({ meeting: m, onFinish }: { meeting: Meeting; onFinish: () =
             <span className="series-chip" title="Recurring meeting series">
               <IconRepeat size={11} />
               {m.series_name}
+            </span>
+          )}
+          {m.department_name && (
+            <span className="series-chip dept-chip" title="Only this department can open it">
+              <IconShield size={11} />
+              {m.department_name}
             </span>
           )}
         </span>
@@ -135,6 +144,9 @@ export default function Meetings() {
   // "" = not recurring, "new" = create a series from the title, otherwise a series id.
   const [seriesChoice, setSeriesChoice] = useState("");
   const [seriesList, setSeriesList] = useState<Series[]>([]);
+  // Who will be able to open the meeting. "" means nobody but me and the admins.
+  const [department, setDepartment] = useState("");
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [stats, setStats] = useState<{ total: number; hours: number; done: number; active: number } | null>(null);
@@ -149,9 +161,27 @@ export default function Meetings() {
   const [exportKind, setExportKind] = useState<"minutes" | "transcript" | "both">("minutes");
   const [exporting, setExporting] = useState(false);
 
+  const { user } = useOutletContext<{ user: User }>();
+  const isAdmin = user?.role === "admin";
+
   useEffect(() => {
     api.listSeries().then(setSeriesList).catch(() => undefined);
   }, []);
+
+  // An administrator can file a meeting under any department; everybody else
+  // only under their own. With exactly one, there is nothing to choose - the
+  // server files it there - so the control stays hidden.
+  useEffect(() => {
+    if (!user) return;
+    if (isAdmin) {
+      api.listDepartments().then(setDepartments).catch(() => undefined);
+      return;
+    }
+    setDepartments(user.departments.map((d) => ({ ...d, member_count: 0, meeting_count: 0 })));
+    if (user.departments.length === 1) setDepartment(user.departments[0].id);
+  }, [user, isAdmin]);
+
+  const showDepartments = departments.length > (isAdmin ? 0 : 1);
 
   const refresh = useCallback(async (q?: string) => {
     api
@@ -200,6 +230,7 @@ export default function Meetings() {
       language_hint: language || null,
       series_id: seriesChoice && seriesChoice !== "new" ? seriesChoice : null,
       new_series_name: seriesChoice === "new" ? title.trim() : null,
+      department_id: department || null,
     };
   }
 
@@ -307,6 +338,22 @@ export default function Meetings() {
             </optgroup>
           )}
         </select>
+        {showDepartments && (
+          <select
+            value={department}
+            onChange={(e) => setDepartment(e.target.value)}
+            disabled={recording}
+            aria-label="Department"
+            title="Only this department can open the meeting"
+          >
+            <option value="">{isAdmin ? "No department (admins only)" : "Only me"}</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        )}
         <button
           className={`btn ${recording ? "btn-rec" : "btn-primary"}`}
           onClick={toggleRecording}

@@ -25,6 +25,41 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+# ---------- departments ----------
+
+
+class DepartmentBrief(ORMModel):
+    id: uuid.UUID
+    name: str
+
+
+class DepartmentOut(DepartmentBrief):
+    member_count: int = 0
+    meeting_count: int = 0
+
+
+class DepartmentCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class DepartmentMembers(BaseModel):
+    """The complete membership of a department - not a delta."""
+
+    user_ids: list[uuid.UUID] = []
+
+
+class UserDepartments(BaseModel):
+    """Every department one person belongs to - not a delta."""
+
+    department_ids: list[uuid.UUID] = []
+
+
+class DepartmentAssign(BaseModel):
+    """Move a meeting into a department, or out of every department."""
+
+    department_id: uuid.UUID | None = None
+
+
 # ---------- users ----------
 
 
@@ -33,6 +68,7 @@ class UserCreate(BaseModel):
     full_name: str = Field(min_length=1, max_length=255)
     password: str | None = Field(default=None, min_length=8)
     role: Role = Role.member
+    department_ids: list[uuid.UUID] = []
 
 
 class UserOut(ORMModel):
@@ -42,6 +78,7 @@ class UserOut(ORMModel):
     role: Role
     is_active: bool
     created_at: datetime
+    departments: list[DepartmentBrief] = []
 
 
 class UserWithEnrollment(UserOut):
@@ -70,6 +107,9 @@ class MeetingCreate(BaseModel):
     # Part of a recurring meeting: an existing series, or a new one by name.
     series_id: uuid.UUID | None = None
     new_series_name: str | None = Field(default=None, max_length=255)
+    # Who will be able to see it. Omitted means "my department" when there is
+    # only one, and otherwise nobody but me and the administrators.
+    department_id: uuid.UUID | None = None
 
 
 class SeriesAssign(BaseModel):
@@ -124,6 +164,8 @@ class MeetingOut(ORMModel):
     minutes_deleted_at: datetime | None
     series_id: uuid.UUID | None = None
     series_name: str | None = None
+    department_id: uuid.UUID | None = None
+    department_name: str | None = None
     is_live: bool = False
     live_transcribed_until: float | None = None
     has_recording: bool = False

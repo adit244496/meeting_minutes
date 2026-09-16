@@ -34,6 +34,13 @@ export const IconUsers = ({ size = 17, className }: Props) => (
   </svg>
 );
 
+export const IconShield = ({ size = 17, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="M12 3l7 3v5.5c0 4.2-2.9 7.7-7 9.5-4.1-1.8-7-5.3-7-9.5V6z" />
+    <path d="M9.2 11.8l2 2 3.6-3.8" />
+  </svg>
+);
+
 export const IconMic = ({ size = 17, className }: Props) => (
   <svg {...base(size)} className={className}>
     <rect x="9" y="3" width="6" height="11" rx="3" />

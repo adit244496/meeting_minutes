@@ -1781,3 +1781,45 @@ body { background: var(--bg); }
   border-bottom: 1px solid var(--border); font-size: 0.82rem; color: var(--text-2); cursor: pointer;
 }
 .follow-toggle input { width: 15px; height: 15px; accent-color: var(--accent); min-height: 0; }
+
+/* ==========================================================================
+   Departments
+   Access is a thing people have to be able to see at a glance, so the
+   department shows as a tag on the meeting and as chips against each person.
+   ========================================================================== */
+
+.dept-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--text-3); white-space: nowrap;
+}
+.dept-tag svg { opacity: 0.75; }
+
+/* A button, so the whole set of chips is one target for "change these". */
+.dept-chips {
+  display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+  border: 0; background: none; padding: 2px; margin: -2px; cursor: pointer; text-align: left;
+}
+.dept-chips:hover .badge { border-color: var(--accent); color: var(--accent); }
+
+.dept-picker {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+  padding: 6px 0;
+}
+.dept-option {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 0.88rem; color: var(--text-1); cursor: pointer;
+  padding: 4px 10px 4px 8px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface-2);
+}
+.dept-option:hover { border-color: var(--accent); }
+.dept-option input { width: 15px; height: 15px; min-height: 0; accent-color: var(--accent); }
+.field.span-2 { grid-column: 1 / -1; }
+.row-actions { display: inline-flex; gap: 6px; align-items: center; }
+
+@media (max-width: 900px) {
+  /* Room for a thumb, and the chips wrap onto their own line in the table. */
+  .dept-option { padding: 8px 12px 8px 10px; font-size: 0.92rem; }
+  .dept-picker { gap: 8px; }
+}
+/* Same shape as the series chip, in a cooler tone so the two do not blur. */
+.series-chip.dept-chip { background: var(--accent-soft); color: var(--accent); border-color: transparent; }

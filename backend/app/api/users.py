@@ -14,14 +14,20 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app import features, storage
 from app.audio import duration_seconds, to_wav16k_mono
 from app.db import get_db
 from app.deps import current_user, require_admin
-from app.models import User, Voiceprint
-from app.schemas import UserCreate, UserOut, UserWithEnrollment, VoiceprintOut
+from app.models import Department, User, Voiceprint
+from app.schemas import (
+    UserCreate,
+    UserDepartments,
+    UserOut,
+    UserWithEnrollment,
+    VoiceprintOut,
+)
 from app.security import hash_password
 from app.speakers.embeddings import embed_file
 
@@ -50,7 +56,9 @@ def list_users(
             .group_by(Voiceprint.user_id)
         ).all()
     )
-    users = db.execute(select(User).order_by(User.full_name)).scalars().all()
+    users = db.execute(
+        select(User).options(selectinload(User.departments)).order_by(User.full_name)
+    ).scalars().all()
     return [
         UserWithEnrollment(
             **UserOut.model_validate(u).model_dump(),
@@ -76,9 +84,45 @@ def create_user(
         full_name=payload.full_name,
         role=payload.role,
         password_hash=hash_password(payload.password) if payload.password else None,
+        departments=_departments(db, payload.department_ids),
     )
     db.add(user)
     db.commit()
+    return user
+
+
+def _departments(db: Session, ids: list[uuid.UUID]) -> list[Department]:
+    if not ids:
+        return []
+    found = db.execute(select(Department).where(Department.id.in_(set(ids)))).scalars().all()
+    missing = set(ids) - {d.id for d in found}
+    if missing:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, f"No such department: {next(iter(missing))}"
+        )
+    return list(found)
+
+
+@router.put("/{user_id}/departments", response_model=UserOut)
+def set_user_departments(
+    user_id: uuid.UUID,
+    payload: UserDepartments,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> User:
+    """Replace everything this person belongs to. Administrators only.
+
+    Removing somebody from a department takes away their access to its
+    meetings immediately - the check runs per request, nothing is cached in
+    their session token.
+    """
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+
+    user.departments = _departments(db, payload.department_ids)
+    db.commit()
+    db.refresh(user)
     return user
 
 

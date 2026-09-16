@@ -13,6 +13,7 @@ from sqlalchemy import select, text
 from app import storage
 from app.api import (
     auth,
+    departments as departments_api,
     downloads,
     live as live_api,
     meetings,
@@ -138,6 +139,12 @@ def _ensure_columns() -> None:
          "ALTER TABLE minutes_versions ADD COLUMN IF NOT EXISTS key_points JSON NOT NULL DEFAULT '[]'"),
         ("minutes_versions", "follow_ups",
          "ALTER TABLE minutes_versions ADD COLUMN IF NOT EXISTS follow_ups JSON NOT NULL DEFAULT '[]'"),
+        # Department-level access. Nullable on purpose: every meeting that
+        # predates departments stays unassigned, which means administrators and
+        # its creator only - see app/access.py.
+        ("meetings", "department_id",
+         "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS department_id UUID "
+         "REFERENCES departments(id) ON DELETE SET NULL"),
     ]
     with engine.connect() as conn:
         columns = {
@@ -161,6 +168,10 @@ def _ensure_columns() -> None:
     pending = [ddl for table, column, ddl in migrations if (table, column) not in columns]
     if ("meetings", "series_id") not in columns:
         pending.append("CREATE INDEX IF NOT EXISTS ix_meetings_series_id ON meetings (series_id)")
+    if ("meetings", "department_id") not in columns:
+        pending.append(
+            "CREATE INDEX IF NOT EXISTS ix_meetings_department_id ON meetings (department_id)"
+        )
     # Was VARCHAR(255), which fits a toggle but not an encrypted API key.
     if columns.get(("app_settings", "value"), "text") != "text":
         pending.append("ALTER TABLE app_settings ALTER COLUMN value TYPE TEXT")
@@ -271,6 +282,8 @@ app.include_router(series.router)
 app.include_router(live_api.router)
 app.include_router(transcripts_api.router)
 app.include_router(speakers_api.router)
+app.include_router(departments_api.router)
+app.include_router(departments_api.assign_router)
 
 
 @app.get("/health", tags=["health"])

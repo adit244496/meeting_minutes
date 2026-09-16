@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import storage
+from app import access, storage
 from app.audio import extract_sample
 from app.db import get_db
 from app.deps import current_user
@@ -50,12 +50,14 @@ def _sample_key(meeting_id: uuid.UUID, label: str) -> str:
 def sample_urls(
     meeting_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
-    """A short-lived playback URL per speaker, for the whole meeting at once."""
-    meeting = db.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
+    """A short-lived playback URL per speaker, for the whole meeting at once.
+
+    Department access is checked here, where the tokens are signed; the clip
+    endpoint below trusts the signature, as <audio src> cannot authenticate.
+    """
+    meeting = access.load_meeting(db, meeting_id, user)
     if not meeting.audio_key:
         return {"samples": {}, "reason": "The recording is no longer available"}
 

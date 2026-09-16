@@ -312,7 +312,13 @@ def segment_row(meeting_id: uuid.UUID, idx: int, seg, fallback_language: str | N
 
 
 def previous_meeting(db: Session, meeting: Meeting) -> Meeting | None:
-    """The latest earlier meeting in the same series that has minutes."""
+    """The latest earlier meeting in the same series that has minutes.
+
+    Restricted to the same department. A series can span departments - an
+    administrator can file any meeting into any series - and follow-ups quote
+    the previous meeting's action items verbatim, which would copy one
+    department's minutes into another's.
+    """
     if not meeting.series_id:
         return None
     return db.execute(
@@ -321,6 +327,7 @@ def previous_meeting(db: Session, meeting: Meeting) -> Meeting | None:
             Meeting.series_id == meeting.series_id,
             Meeting.id != meeting.id,
             Meeting.started_at < meeting.started_at,
+            Meeting.department_id.is_not_distinct_from(meeting.department_id),
             Meeting.id.in_(select(Minutes.meeting_id)),
         )
         .order_by(Meeting.started_at.desc())

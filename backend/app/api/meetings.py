@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import features, live, progress, storage
+from app import access, features, live, progress, storage
 from app.api.series import create_series
 from app.config import settings
 from app.db import get_db
@@ -36,7 +36,7 @@ router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 STALE_PROCESSING_SECONDS = 15 * 60
 
 
-def _load(db: Session, meeting_id: uuid.UUID) -> Meeting:
+def _load(db: Session, meeting_id: uuid.UUID, user: User) -> Meeting:
     meeting = db.execute(
         select(Meeting)
         .where(Meeting.id == meeting_id)
@@ -45,11 +45,12 @@ def _load(db: Session, meeting_id: uuid.UUID) -> Meeting:
             selectinload(Meeting.participants),
             selectinload(Meeting.minutes),
             selectinload(Meeting.series),
+            selectinload(Meeting.department),
         )
     ).scalar_one_or_none()
     if meeting is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
-    return meeting
+    return access.ensure_view(user, meeting)
 
 
 @router.post("", response_model=MeetingOut, status_code=status.HTTP_201_CREATED)
@@ -69,6 +70,7 @@ def create_meeting(
         asr_provider=payload.asr_provider,
         created_by=user.id,
         series_id=series_id,
+        department_id=access.department_for_new_meeting(user, payload.department_id),
     )
     db.add(meeting)
     db.commit()
@@ -80,16 +82,14 @@ def upload_audio(
     meeting_id: uuid.UUID,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> Meeting:
     """Attach audio and queue processing.
 
     Accepts anything ffmpeg can decode - a browser MediaRecorder blob, an m4a
     from a phone, a Zoom cloud recording. Normalisation happens in the worker.
     """
-    meeting = db.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
+    meeting = access.load_meeting(db, meeting_id, user)
     if meeting.status == MeetingStatus.processing:
         raise HTTPException(status.HTTP_409_CONFLICT, "This meeting is already processing")
 
@@ -116,12 +116,10 @@ def upload_audio(
 def reprocess(
     meeting_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> Meeting:
     """Re-run the pipeline - e.g. after enrolling voices that were missing."""
-    meeting = db.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
+    meeting = access.load_meeting(db, meeting_id, user)
     if not meeting.audio_key:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "This meeting has no audio")
     # "uploaded" is queued-but-not-started; requeueing it would run it twice.
@@ -151,15 +149,21 @@ def list_meetings(
     limit: int = Query(default=50, le=200),
     offset: int = 0,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> list[Meeting]:
-    """Meeting history.
+    """Meeting history, limited to what this person may see.
 
     Search is keyword-based over titles, transcripts and summaries. Semantic
     search across history is the intended next step - see README "Searching
     history"; `minutes.embedding` is already in the schema for it.
     """
-    stmt = select(Meeting).options(selectinload(Meeting.series))
+    stmt = select(Meeting).options(
+        selectinload(Meeting.series), selectinload(Meeting.department)
+    )
+
+    allowed = access.visible_clause(user)
+    if allowed is not None:
+        stmt = stmt.where(allowed)
 
     if status_filter:
         stmt = stmt.where(Meeting.status == status_filter)
@@ -177,27 +181,26 @@ def list_meetings(
 def get_meeting(
     meeting_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> Meeting:
-    return _load(db, meeting_id)
+    return _load(db, meeting_id, user)
 
 
 @router.get("/{meeting_id}/audio-url")
 def audio_url(
     meeting_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
     """Hand back a short-lived playback URL.
 
     The token goes in the query string because <audio src> cannot send an
     Authorization header. It is scoped to this one meeting and expires in 15
     minutes, so a leaked URL exposes one recording briefly rather than the
-    bearer's whole session.
+    bearer's whole session. Department access is checked here, when the token
+    is issued - the stream endpoint trusts the signature.
     """
-    meeting = db.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
+    meeting = access.load_meeting(db, meeting_id, user)
     if not meeting.audio_key:
         detail = (
             "The recording was deleted under the retention policy"
@@ -267,7 +270,7 @@ def relabel_speaker(
     meeting_id: uuid.UUID,
     payload: RelabelRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    caller: User = Depends(current_user),
 ) -> Meeting:
     """Correct who a speaker was.
 
@@ -283,7 +286,7 @@ def relabel_speaker(
             "under Users & Voices.",
         )
 
-    meeting = _load(db, meeting_id)
+    meeting = _load(db, meeting_id, caller)
 
     participant = next(
         (p for p in meeting.participants if p.speaker_label == payload.speaker_label), None
@@ -313,7 +316,7 @@ def relabel_speaker(
             str(meeting.id), participant.speaker_label, str(participant.user_id)
         )
 
-    return _load(db, meeting_id)
+    return _load(db, meeting_id, caller)
 
 
 @router.get("/{meeting_id}/events")
@@ -375,24 +378,35 @@ async def stream_progress(meeting_id: uuid.UUID) -> StreamingResponse:
 @router.get("/stats/overview")
 def overview(
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
+    """Headline numbers, counting only the meetings this person can open."""
+    allowed = access.visible_clause(user)
+
+    def scoped(stmt):
+        return stmt if allowed is None else stmt.where(allowed)
+
     by_status = dict(
-        db.execute(select(Meeting.status, func.count(Meeting.id)).group_by(Meeting.status)).all()
+        db.execute(
+            scoped(select(Meeting.status, func.count(Meeting.id))).group_by(Meeting.status)
+        ).all()
     )
+    speakers = select(func.count(Participant.id)).where(Participant.user_id.is_not(None))
+    if allowed is not None:
+        speakers = speakers.join(Meeting, Meeting.id == Participant.meeting_id).where(allowed)
     return {
         "total_meetings": int(sum(by_status.values())),
         "by_status": {k.value: v for k, v in by_status.items()},
         "total_hours": round(
-            float(db.execute(select(func.coalesce(func.sum(Meeting.duration_seconds), 0.0))).scalar_one())
+            float(
+                db.execute(
+                    scoped(select(func.coalesce(func.sum(Meeting.duration_seconds), 0.0)))
+                ).scalar_one()
+            )
             / 3600,
             2,
         ),
-        "identified_speakers": int(
-            db.execute(
-                select(func.count(Participant.id)).where(Participant.user_id.is_not(None))
-            ).scalar_one()
-        ),
+        "identified_speakers": int(db.execute(speakers).scalar_one()),
     }
 
 

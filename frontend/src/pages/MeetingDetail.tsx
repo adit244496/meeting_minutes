@@ -17,6 +17,7 @@ import {
   IconPlus,
   IconRefresh,
   IconRepeat,
+  IconShield,
   IconSparkle,
   IconStar,
   IconStop,
@@ -27,6 +28,7 @@ import {
   api,
   formatDuration,
   formatTimestamp,
+  type Department,
   type MeetingDetail as Detail,
   type Minutes,
   type MinutesKind,
@@ -79,6 +81,7 @@ export default function MeetingDetail() {
   const [users, setUsers] = useState<User[]>([]);
   const [tab, setTab] = useState<"minutes" | "transcript" | "series">("minutes");
   const [seriesList, setSeriesList] = useState<Series[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [suggestion, setSuggestion] = useState<SeriesSuggestion | null>(null);
   const [kind, setKind] = useState<MinutesKind>("short");
   const kindChosen = useRef(false);
@@ -378,6 +381,17 @@ export default function MeetingDetail() {
     api.listSeries().then(setSeriesList).catch(() => undefined);
   }, []);
 
+  // Where this meeting can be filed. An administrator may use any department;
+  // everybody else only their own, so they cannot move a meeting out of reach.
+  useEffect(() => {
+    if (!user) return;
+    if (user.role === "admin") {
+      api.listDepartments().then(setDepartments).catch(() => undefined);
+    } else {
+      setDepartments(user.departments.map((d) => ({ ...d, member_count: 0, meeting_count: 0 })));
+    }
+  }, [user]);
+
   useEffect(() => {
     if (!meeting || meeting.series_id) {
       setSuggestion(null);
@@ -509,6 +523,13 @@ export default function MeetingDetail() {
     if (name?.trim()) changeSeries({ new_series_name: name.trim() });
   }
 
+  async function changeDepartment(departmentId: string | null) {
+    await run(async () => {
+      await api.assignDepartment(id, departmentId);
+      await load();
+    }, "Could not change the department");
+  }
+
   if (!meeting) {
     return <p className="dim">{error || "Loading…"}</p>;
   }
@@ -535,6 +556,10 @@ export default function MeetingDetail() {
             <span>{new Date(meeting.started_at).toLocaleString()}</span>
             {meeting.duration_seconds ? <span>{formatDuration(meeting.duration_seconds)}</span> : null}
             {speakers.length > 0 && <span>{speakers.length} speakers</span>}
+            <span className="dept-tag" title="Who can open this meeting">
+              <IconShield size={12} />
+              {meeting.department_name ?? (isAdmin ? "No department" : "Only you")}
+            </span>
           </div>
         </div>
         <div className="btn-group btn-group-tight">
@@ -560,6 +585,30 @@ export default function MeetingDetail() {
             )}
           </MenuGroup>
         </Menu>
+        {departments.length > 0 && (
+          <Menu
+            label={meeting.department_name ?? "Department"}
+            icon={<IconShield size={14} />}
+            className={meeting.department_id ? "menu-series" : undefined}
+          >
+            <MenuGroup title="Who can open this meeting">
+              {departments.map((d) => (
+                <MenuItem
+                  key={d.id}
+                  checked={meeting.department_id === d.id}
+                  onClick={() => changeDepartment(d.id)}
+                >
+                  {d.name}
+                </MenuItem>
+              ))}
+              {isAdmin && meeting.department_id && (
+                <MenuItem onClick={() => changeDepartment(null)} note="Admins only">
+                  Remove from department
+                </MenuItem>
+              )}
+            </MenuGroup>
+          </Menu>
+        )}
         <Menu label="More" icon={<IconRefresh size={14} />}>
           <MenuItem
             onClick={() => download("audio", "recording")}

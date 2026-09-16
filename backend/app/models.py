@@ -71,6 +71,33 @@ class AudioSource(str, enum.Enum):
     meet = "meet"
 
 
+class Department(Base):
+    """A group whose meetings only its own people (and admins) can see."""
+
+    __tablename__ = "departments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    members: Mapped[list[User]] = relationship(
+        secondary="user_departments", back_populates="departments"
+    )
+
+
+class UserDepartment(Base):
+    """Who is in which department. Somebody can sit in more than one."""
+
+    __tablename__ = "user_departments"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    department_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -85,6 +112,13 @@ class User(Base):
     voiceprints: Mapped[list[Voiceprint]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    departments: Mapped[list[Department]] = relationship(
+        secondary="user_departments", back_populates="members"
+    )
+
+    @property
+    def department_ids(self) -> list[uuid.UUID]:
+        return [d.id for d in self.departments]
 
 
 class Voiceprint(Base):
@@ -139,6 +173,11 @@ class Meeting(Base):
     title: Mapped[str] = mapped_column(String(512))
     series_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("meeting_series.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Who may see this meeting. NULL means nobody but admins and its creator -
+    # which is what meetings recorded before departments existed inherit.
+    department_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True
     )
     # Being recorded right now, with a live transcript built as audio arrives.
     is_live: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -196,6 +235,12 @@ class Meeting(Base):
     @property
     def has_recording(self) -> bool:
         return bool(self.audio_key)
+
+    department: Mapped[Department | None] = relationship()
+
+    @property
+    def department_name(self) -> str | None:
+        return self.department.name if self.department else None
 
 
 class Participant(Base):

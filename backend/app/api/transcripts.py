@@ -12,10 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import progress, transcripts
+from app import access, progress, transcripts
 from app.db import get_db
 from app.deps import current_user
-from app.models import Meeting, MeetingStatus, Segment, User
+from app.models import MeetingStatus, Segment, User
 from app.worker.tasks import translate_transcript_task
 
 router = APIRouter(prefix="/api/meetings", tags=["transcripts"])
@@ -30,9 +30,10 @@ STALE_SECONDS = 5 * 60
 def list_translations(
     meeting_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
     """Which languages are ready, and which one is being made right now."""
+    access.load_meeting(db, meeting_id, user)
     state = progress.last_state(str(meeting_id)) or {}
     quiet = progress.seconds_since_update(str(meeting_id))
     running = state.get("stage") == "translate" and quiet is not None and quiet < STALE_SECONDS
@@ -48,8 +49,9 @@ def get_translation(
     meeting_id: uuid.UUID,
     language: str = LANGUAGE,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
+    access.load_meeting(db, meeting_id, user)
     row = transcripts.get(db, meeting_id, language)
     if row is None:
         raise HTTPException(
@@ -68,12 +70,10 @@ def translate(
     meeting_id: uuid.UUID,
     language: str = LANGUAGE,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
     """Queue a translation. Follow GET /{meeting_id}/events for progress."""
-    meeting = db.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
+    meeting = access.load_meeting(db, meeting_id, user)
     if not db.execute(select(Segment.id).where(Segment.meeting_id == meeting_id).limit(1)).first():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "This meeting has no transcript yet")
     if meeting.status in (MeetingStatus.uploaded, MeetingStatus.processing) or meeting.is_live:
