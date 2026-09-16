@@ -26,6 +26,8 @@ import {
   type Meeting,
   type MeetingDetail,
   type Series,
+  type TranscriptLanguage,
+  TRANSCRIPT_LANGUAGES,
   type User,
   useMeetingProgress,
 } from "../lib/api";
@@ -169,6 +171,7 @@ export default function Meetings() {
 
   const [exportDays, setExportDays] = useState(7);
   const [exportKind, setExportKind] = useState<"minutes" | "transcript" | "both">("minutes");
+  const [exportLanguage, setExportLanguage] = useState<TranscriptLanguage | "">("");
   const [exporting, setExporting] = useState(false);
 
   const { user } = useOutletContext<{ user: User }>();
@@ -225,7 +228,7 @@ export default function Meetings() {
     setExporting(true);
     setError("");
     try {
-      await api.exportMeetings(exportKind, exportDays);
+      await api.exportMeetings(exportKind, exportDays, exportLanguage);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Export failed");
     } finally {
@@ -514,6 +517,22 @@ export default function Meetings() {
                   <option value="both">Minutes and transcripts</option>
                 </select>
               </label>
+              {exportKind !== "minutes" && (
+                <label className="field">
+                  <span>Transcript language</span>
+                  <select
+                    value={exportLanguage}
+                    onChange={(e) => setExportLanguage(e.target.value as typeof exportLanguage)}
+                  >
+                    <option value="">Original, as spoken</option>
+                    {TRANSCRIPT_LANGUAGES.map(([code, name]) => (
+                      <option key={code} value={code}>
+                        {name} where translated
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <button className="btn btn-sm btn-primary btn-block" data-close onClick={exportArchive} disabled={exporting}>
                 <IconDownload size={14} />
                 {exporting ? "Preparing…" : "Download ZIP"}

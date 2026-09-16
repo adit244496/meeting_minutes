@@ -541,6 +541,9 @@ export default function MeetingDetail() {
   // a viewer's to override.
   const recordedHere = meeting.source === "browser_mic";
   const showClock = clockTimes ?? recordedHere;
+  // Only ask for a translation the server actually has; otherwise the download
+  // would 404 where the page is still showing the original.
+  const langParam = lang !== "original" && ready.includes(lang) ? `&language=${lang}` : "";
 
   const names = new Map(meeting.participants.map((p) => [p.speaker_label, p]));
   const minutes = meeting.minutes.find((m) => m.kind === kind) ?? null;
@@ -905,9 +908,38 @@ export default function MeetingDetail() {
               ))}
             </div>
             <Menu label="Download" icon={<IconDownload size={14} />}>
-            <MenuItem onClick={() => download("transcript?fmt=docx", "transcript.docx")}>Word (.docx)</MenuItem>
-            <MenuItem onClick={() => download("transcript?fmt=txt", "transcript.txt")}>Text (.txt)</MenuItem>
-            <MenuItem onClick={() => download("transcript?fmt=srt", "transcript.srt")}>Subtitles (.srt)</MenuItem>
+            {/* Downloads follow the language on screen. Someone reading the
+                English tab and clicking Download means the English one. */}
+            <MenuGroup
+              title={
+                lang === "original"
+                  ? "Original, as spoken"
+                  : `In ${TRANSCRIPT_LANGUAGES.find(([c]) => c === lang)?.[1]}`
+              }
+            >
+              <MenuItem onClick={() => download(`transcript?fmt=docx${langParam}`, "transcript.docx")}>
+                Word (.docx)
+              </MenuItem>
+              <MenuItem onClick={() => download(`transcript?fmt=txt${langParam}`, "transcript.txt")}>
+                Text (.txt)
+              </MenuItem>
+              <MenuItem onClick={() => download(`transcript?fmt=srt${langParam}`, "transcript.srt")}>
+                Subtitles (.srt)
+              </MenuItem>
+              <MenuItem onClick={() => download(`transcript?fmt=json${langParam}`, "transcript.json")}>
+                Data (.json)
+              </MenuItem>
+            </MenuGroup>
+            {lang !== "original" && (
+              <MenuGroup title="Original, as spoken">
+                <MenuItem onClick={() => download("transcript?fmt=docx", "transcript.docx")}>
+                  Word (.docx)
+                </MenuItem>
+                <MenuItem onClick={() => download("transcript?fmt=txt", "transcript.txt")}>
+                  Text (.txt)
+                </MenuItem>
+              </MenuGroup>
+            )}
             </Menu>
           </div>
         )}
@@ -1021,9 +1053,11 @@ export default function MeetingDetail() {
                   Follow the recording
                 </label>
               )}
-              <div className="seg seg-head">
+              <div className={`seg seg-head ${showClock ? "clock" : ""}`}>
                 {/* The header doubles as the control: the column it labels is
-                    the thing being switched, and it costs no extra row. */}
+                    the thing being switched, and it costs no extra row. The
+                    label stays one short word either way - the values below it
+                    say which mode it is in far better than a heading could. */}
                 <button
                   className="time-toggle"
                   onClick={() => setClockTimes(!showClock)}
@@ -1033,7 +1067,7 @@ export default function MeetingDetail() {
                       : "Time into the recording. Click for clock time."
                   }
                 >
-                  {showClock ? "Time of day" : "Time"}
+                  Time
                   <IconClock size={11} />
                 </button>
                 <span aria-hidden="true">Speaker</span>
@@ -1047,7 +1081,9 @@ export default function MeetingDetail() {
                   <div
                     key={s.idx}
                     id={`seg-${s.idx}`}
-                    className={`seg ${participant?.user_id ? "" : "unknown"} ${s.idx === spokenIdx ? "is-spoken" : ""}`}
+                    className={`seg ${participant?.user_id ? "" : "unknown"} ${
+                      s.idx === spokenIdx ? "is-spoken" : ""
+                    } ${showClock ? "clock" : ""}`}
                   >
                     <button
                       className="ts ts-seek"

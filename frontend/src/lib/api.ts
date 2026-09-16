@@ -522,9 +522,18 @@ export const api = {
       body: JSON.stringify({ value }),
     }),
 
-  /** Every transcript and/or set of minutes from the last `days` days as a ZIP. */
-  exportMeetings: (kind: "transcript" | "minutes" | "both", days: number): Promise<void> =>
-    api.download(`/api/exports/meetings?kind=${kind}&days=${days}`, "neo-minutes-export.zip"),
+  /** Every transcript and/or set of minutes from the last `days` days as a ZIP.
+   *  With a language, each transcript that has been translated into it is used
+   *  in place of the original; the rest fall back to the original. */
+  exportMeetings: (
+    kind: "transcript" | "minutes" | "both",
+    days: number,
+    language?: TranscriptLanguage | "",
+  ): Promise<void> =>
+    api.download(
+      `/api/exports/meetings?kind=${kind}&days=${days}${language ? `&language=${language}` : ""}`,
+      "neo-minutes-export.zip",
+    ),
 
   /** Fetch a protected file and hand it to the browser as a download.
    *
@@ -580,6 +589,10 @@ export function formatDuration(seconds: number | null | undefined): string {
 export function clockAt(startedAt: string, ms: number, seconds = false): string {
   const at = new Date(new Date(startedAt).getTime() + ms);
   return at.toLocaleTimeString(undefined, {
+    // 24-hour regardless of locale. These sit in a narrow monospace column,
+    // one per line, where a trailing "PM" costs a third of the width and buys
+    // nothing: the reader already knows which afternoon the meeting was.
+    hour12: false,
     hour: "2-digit",
     minute: "2-digit",
     ...(seconds ? { second: "2-digit" } : {}),
