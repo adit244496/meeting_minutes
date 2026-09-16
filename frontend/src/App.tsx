@@ -76,7 +76,8 @@ function initials(name: string) {
 function Brand() {
   return (
     <div className="brand">
-      <span className="mark">NM</span>
+      {/* The same mark as the favicon and the home-screen icon. */}
+      <img className="mark" src="/favicon.svg" alt="" width={30} height={30} />
       <span className="name">
         Neo <b>Minutes</b>
       </span>

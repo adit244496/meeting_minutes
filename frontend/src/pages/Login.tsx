@@ -40,7 +40,7 @@ export default function Login() {
 
       <form className="auth-card" onSubmit={submit}>
         <div className="auth-head">
-          <span className="mark">NM</span>
+          <img className="mark" src="/favicon.svg" alt="" width={52} height={52} />
           <h1>
             Neo <b>Minutes</b>
           </h1>

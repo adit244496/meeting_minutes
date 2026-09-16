@@ -1693,3 +1693,38 @@ body { background: var(--bg); }
   .tabbar > .segmented { width: 100%; }
   .tabbar > .segmented button { flex: 1; }
 }
+
+/* ---------- brand mark as the logo image ----------
+   Same artwork as the favicon and the iOS home-screen icon, so the app is
+   recognisable in a tab strip and on a home screen. */
+.brand img.mark, .auth-head img.mark {
+  display: block; padding: 0; background: none; box-shadow: none;
+  border-radius: 9px; object-fit: contain;
+}
+.auth-head img.mark { margin: 0 auto 14px; border-radius: 15px; }
+
+/* ---------- tighter minutes ----------
+   The document had generous section padding from its first draft; at a glance
+   it now fits about a third more on a screen without feeling crowded. */
+.minutes-doc { padding: 0 16px 6px; }
+.minutes-doc section { padding: 9px 0; }
+.minutes-doc h4.md-head { margin-bottom: 7px; gap: 7px; }
+.md-icon { width: 20px; height: 20px; border-radius: 6px; }
+.md-stats { padding: 10px 0 2px; gap: 6px; }
+.md-stat { padding: 3px 9px; }
+.md-summary { padding: 10px 12px; line-height: 1.55; }
+.md-list, .md-actions, .md-followups { gap: 6px; }
+.md-list > li, .md-actions > li { gap: 8px; }
+.md-decision, .md-action { padding: 8px 10px; }
+.md-note { margin-top: 2px; }
+.md-meta { margin-top: 5px; gap: 5px; }
+.md-decision .md-chip { margin-top: 5px; }
+.md-highlights { gap: 4px; }
+.md-highlights > li { padding: 6px 10px; }
+.md-topics > li { padding-bottom: 7px; }
+.md-n { min-width: 22px; }
+.card-head-tight { min-height: 38px; }
+@media (max-width: 900px) {
+  .minutes-doc { padding: 0 12px 4px; }
+  .minutes-doc section { padding: 8px 0; }
+}
