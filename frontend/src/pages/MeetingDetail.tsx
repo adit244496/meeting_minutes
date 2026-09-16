@@ -108,6 +108,14 @@ export default function MeetingDetail() {
   const [playingSpeaker, setPlayingSpeaker] = useState<string | null>(null);
   const player = useRef<HTMLAudioElement | null>(null);
 
+  // Following the recording through the transcript: the line being spoken is
+  // highlighted, and the view keeps it in sight while the audio plays.
+  const recordingRef = useRef<HTMLAudioElement | null>(null);
+  const [spokenIdx, setSpokenIdx] = useState<number | null>(null);
+  const spokenIdxRef = useRef<number | null>(null);
+  const [following, setFollowing] = useState(true);
+  const [playing, setPlaying] = useState(false);
+
   const load = useCallback(async () => {
     try {
       const detail = await api.getMeeting(id);
@@ -275,6 +283,38 @@ export default function MeetingDetail() {
     };
   }, []);
 
+  /** Which line is being spoken now. Called several times a second, so state
+   *  only changes when the line does - not on every tick. */
+  function onPlayTime() {
+    const audio = recordingRef.current;
+    const segments = meeting?.segments ?? [];
+    if (!audio || !segments.length) return;
+    const at = audio.currentTime * 1000;
+
+    let found: number | null = null;
+    for (const s of segments) {
+      if (s.start_ms > at) break;
+      if (at < s.end_ms) {
+        found = s.idx;
+        break;
+      }
+      // Between two segments: keep the one just finished highlighted.
+      found = s.idx;
+    }
+    if (found !== spokenIdxRef.current) {
+      spokenIdxRef.current = found;
+      setSpokenIdx(found);
+    }
+  }
+
+  /** Play the recording from this line. */
+  function playFrom(startMs: number) {
+    const audio = recordingRef.current;
+    if (!audio) return;
+    audio.currentTime = startMs / 1000;
+    audio.play().catch(() => undefined);
+  }
+
   function playSample(label: string) {
     const audio = player.current;
     const url = samples[label];
@@ -292,6 +332,11 @@ export default function MeetingDetail() {
       .then(() => setPlayingSpeaker(label))
       .catch(() => setError("Could not play this voice sample"));
   }
+
+  useEffect(() => {
+    if (!following || !playing || spokenIdx === null || tab !== "transcript") return;
+    document.getElementById(`seg-${spokenIdx}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [spokenIdx, following, playing, tab]);
 
   async function relabel(speakerLabel: string, userId: string) {
     await run(async () => {
@@ -669,7 +714,21 @@ export default function MeetingDetail() {
               </span>
             ) : (
               // eslint-disable-next-line jsx-a11y/media-has-caption
-              <audio controls src={audioSrc} className="audio-inline" onError={() => setAudioFailed(true)} />
+              <audio
+                ref={recordingRef}
+                controls
+                src={audioSrc}
+                className="audio-inline"
+                onTimeUpdate={onPlayTime}
+                onSeeked={onPlayTime}
+                onPlay={() => {
+                  setPlaying(true);
+                  if (tab !== "transcript" && meeting.segments.length) setTab("transcript");
+                }}
+                onPause={() => setPlaying(false)}
+                onEnded={() => setPlaying(false)}
+                onError={() => setAudioFailed(true)}
+              />
             ))
           )}
 
@@ -827,6 +886,12 @@ export default function MeetingDetail() {
                   )}
                 </div>
               )}
+              {audioSrc && !audioFailed && (
+                <label className="follow-toggle">
+                  <input type="checkbox" checked={following} onChange={(e) => setFollowing(e.target.checked)} />
+                  Follow the recording
+                </label>
+              )}
               <div className="seg seg-head" aria-hidden="true">
                 <span>Time</span>
                 <span>Speaker</span>
@@ -837,8 +902,19 @@ export default function MeetingDetail() {
                 const participant = names.get(s.speaker_label);
                 const mixed = s.scripts?.includes("+");
                 return (
-                  <div key={s.idx} className={`seg ${participant?.user_id ? "" : "unknown"}`}>
-                    <span className="ts">{formatTimestamp(s.start_ms)}</span>
+                  <div
+                    key={s.idx}
+                    id={`seg-${s.idx}`}
+                    className={`seg ${participant?.user_id ? "" : "unknown"} ${s.idx === spokenIdx ? "is-spoken" : ""}`}
+                  >
+                    <button
+                      className="ts ts-seek"
+                      onClick={() => playFrom(s.start_ms)}
+                      disabled={!audioSrc || audioFailed}
+                      title={audioSrc ? "Play the recording from here" : "No recording available"}
+                    >
+                      {formatTimestamp(s.start_ms)}
+                    </button>
                     <span className="who">{participant?.display_name ?? s.speaker_label}</span>
                     <span className={`lang ${mixed ? "mixed" : ""}`}>
                       {mixed ? "mixed" : s.language || "—"}

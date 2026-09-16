@@ -1760,3 +1760,24 @@ body { background: var(--bg); }
   .speaker-row { grid-template-columns: auto minmax(0, 1fr); }
   .speaker-row select { grid-column: 1 / -1; }
 }
+
+/* ---------- following the recording ----------
+   The line being spoken is marked while the audio plays, so it is obvious who
+   is saying what. The timestamp doubles as "play from here". */
+.seg.is-spoken {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.seg.is-spoken .said { color: var(--text); font-weight: 550; }
+.ts-seek {
+  border: 0; background: none; padding: 0; text-align: left; cursor: pointer;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text-3);
+}
+.ts-seek:hover:not(:disabled) { color: var(--accent); text-decoration: underline; }
+.ts-seek:disabled { cursor: default; }
+.seg.is-spoken .ts-seek { color: var(--accent); font-weight: 600; }
+.follow-toggle {
+  display: flex; align-items: center; gap: 8px; padding: 7px 14px;
+  border-bottom: 1px solid var(--border); font-size: 0.82rem; color: var(--text-2); cursor: pointer;
+}
+.follow-toggle input { width: 15px; height: 15px; accent-color: var(--accent); min-height: 0; }
