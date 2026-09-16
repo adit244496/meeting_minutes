@@ -1,1 +1,0 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/Menu.tsx","./src/components/icons.tsx","./src/lib/api.ts","./src/lib/recorder.tsx","./src/lib/theme.ts","./src/pages/Admin.tsx","./src/pages/Login.tsx","./src/pages/MeetingDetail.tsx","./src/pages/Meetings.tsx"],"version":"5.9.3"}

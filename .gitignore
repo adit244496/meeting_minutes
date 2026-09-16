@@ -27,3 +27,6 @@ data/
 # celery runtime state
 celerybeat-schedule*
 celerybeat.pid
+
+# TypeScript incremental build cache
+*.tsbuildinfo
