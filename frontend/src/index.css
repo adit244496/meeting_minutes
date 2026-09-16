@@ -1606,3 +1606,90 @@ body { background: var(--bg); }
   .auth-card { padding: 26px 18px 20px; }
   .auth-head h1 { font-size: 1.35rem; }
 }
+
+/* ---------- numbered minutes ----------
+   Plain "1)" markers rather than a different icon per section: the numbers
+   make items easy to refer to in a discussion, and every list reads the same.
+   The number takes the section's tone colour. */
+.md-n {
+  flex: none; min-width: 26px; padding-top: 1px;
+  font-weight: 750; font-variant-numeric: tabular-nums; color: var(--tone, var(--text-2));
+}
+.md-highlights { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.md-highlights > li { align-items: flex-start; }
+.md-highlights.compact > li { padding: 4px 9px; font-size: 0.86rem; font-weight: 550; }
+.md-topics > li .md-n { color: var(--plum); }
+.md-question { align-items: flex-start; gap: 4px; }
+
+/* ---------- company logo ----------
+   Beside the stat cards on a wide screen, at the foot of the page on a phone. */
+.company-logo { display: inline-flex; align-items: center; }
+.company-logo img { max-height: 34px; max-width: 170px; object-fit: contain; }
+.kpis .company-logo { margin-left: auto; padding-left: 8px; }
+.company-foot {
+  display: flex; justify-content: center; margin: 22px auto 4px;
+  padding-top: 16px; border-top: 1px solid var(--border); width: 100%;
+}
+.company-foot img { max-height: 30px; opacity: .85; }
+.on-phone { display: none; }
+@media (max-width: 900px) {
+  .on-wide { display: none; }
+  .on-phone { display: flex; }
+}
+
+/* ---------- settings on a phone ---------- */
+@media (max-width: 900px) {
+  .settings-layout { gap: 12px; }
+  /* Section switcher as a scrollable strip of chips. */
+  .settings-nav { gap: 8px; padding-bottom: 4px; margin: 0 -2px; }
+  .settings-nav-item { border-radius: 999px; padding: 8px 14px; font-weight: 600; }
+  .settings-nav-item .label { font-size: 0.9rem; }
+  .settings-nav-item[aria-current="page"] { border-color: var(--accent-line); }
+  .section-title h2 { font-size: 1.15rem; }
+
+  .stat-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stat-value { font-size: 1.1rem; }
+  .stat-label { font-size: 0.74rem; }
+
+  /* Label above control, both full width: side by side leaves each too narrow. */
+  .setting-row { grid-template-columns: 1fr; gap: 8px; padding: 14px 0; }
+  .setting-copy .label { font-size: 0.95rem; }
+  .setting-copy .desc { font-size: 0.88rem; }
+  .setting-control select, .setting-control input { width: 100%; }
+  label.setting-row { grid-template-columns: 1fr auto; align-items: center; }
+  .switch { justify-content: flex-end; }
+
+  .choice-grid { grid-template-columns: 1fr; }
+  .provider-fields { gap: 18px; }
+  .key-row { flex-wrap: wrap; }
+  .key-row .input-affix { flex: 1 1 100%; }
+  .key-row .btn { flex: 1 1 auto; }
+  .field-help { font-size: 0.82rem; }
+  .model-checklist { grid-template-columns: 1fr; }
+
+  /* People: the add form and the search row stack rather than squeeze. */
+  .toolbar { flex-wrap: wrap; }
+  .toolbar .btn { width: 100%; }
+  .person-text strong { font-size: 0.95rem; }
+  .person-text span { font-size: 0.85rem; }
+  .card-actions { flex-wrap: wrap; }
+  .card-actions .btn { flex: 1 1 auto; }
+}
+
+/* ---------- minutes header actions on a phone ----------
+   Four buttons wrapped into a ragged, centre-aligned stack. Give them an even
+   two-column grid under the version badges instead. */
+@media (max-width: 620px) {
+  .card-head-tight { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }
+  .card-head-tight > .row { justify-content: flex-start; }
+  .btn-group-tight { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; width: 100%; }
+  .btn-group-tight > .btn, .btn-group-tight > .menu { width: 100%; }
+  .btn-group-tight .menu > summary { width: 100%; justify-content: center; }
+  .meeting-head > .btn-group { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .meeting-head .btn-group .menu, .meeting-head .btn-group .menu > summary { width: 100%; justify-content: center; }
+  .audio-failed { color: var(--text-2); }
+  /* The tabs and the short/detailed switch each take a full row. */
+  .tabbar { flex-direction: column; align-items: stretch; gap: 8px; }
+  .tabbar > .segmented { width: 100%; }
+  .tabbar > .segmented button { flex: 1; }
+}

@@ -79,6 +79,9 @@ export default function MeetingDetail() {
   const [kind, setKind] = useState<MinutesKind>("short");
   const kindChosen = useRef(false);
   const [audioSrc, setAudioSrc] = useState<string | null>(null);
+  // Safari cannot play WebM at all, so a recording made in Chrome will not play
+  // on an iPhone. Say so and offer the file rather than leaving a dead player.
+  const [audioFailed, setAudioFailed] = useState(false);
   const [canRelabel, setCanRelabel] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -120,7 +123,11 @@ export default function MeetingDetail() {
     let cancelled = false;
     api
       .audioUrl(id)
-      .then(({ url }) => !cancelled && setAudioSrc(url.startsWith("http") ? url : API_BASE + url))
+      .then(({ url }) => {
+        if (cancelled) return;
+        setAudioFailed(false);
+        setAudioSrc(url.startsWith("http") ? url : API_BASE + url);
+      })
       .catch(() => undefined);
     return () => {
       cancelled = true;
@@ -515,10 +522,19 @@ export default function MeetingDetail() {
               Recording deleted {new Date(meeting.audio_deleted_at).toLocaleDateString()}
             </span>
           ) : (
-            audioSrc && (
+            audioSrc &&
+            (audioFailed ? (
+              <span className="audio-failed small">
+                This browser cannot play this recording.{" "}
+                <button className="link-btn" onClick={() => download("audio", "recording")}>
+                  Download it
+                </button>{" "}
+                to listen.
+              </span>
+            ) : (
               // eslint-disable-next-line jsx-a11y/media-has-caption
-              <audio controls src={audioSrc} className="audio-inline" />
-            )
+              <audio controls src={audioSrc} className="audio-inline" onError={() => setAudioFailed(true)} />
+            ))
           )}
           {speakers.length > 0 && !canRelabel && (
             <div className="chips">
@@ -1090,16 +1106,16 @@ function MinutesView({ content }: { content: Content }) {
       {(content.key_points?.length ?? 0) > 0 && (
         <section>
           <SectionHead tone="warn" icon={<IconStar size={13} />} title="Key highlights" />
-          <ul className="md-highlights">
+          <ol className="md-highlights">
             {content.key_points.map((point, i) => (
               <li key={i}>
-                <IconStar size={13} />
+                <span className="md-n">{i + 1})</span>
                 <span>
                   <Emphasize text={point} />
                 </span>
               </li>
             ))}
-          </ul>
+          </ol>
         </section>
       )}
 
@@ -1111,9 +1127,7 @@ function MinutesView({ content }: { content: Content }) {
           <ol className="md-list">
             {content.decisions.map((d, i) => (
               <li key={i} className="md-decision">
-                <span className="md-mark ok" aria-hidden="true">
-                  <IconCheck size={12} />
-                </span>
+                <span className="md-n">{i + 1})</span>
                 <div className="grow">
                   <p className="md-strong">
                     <Emphasize text={d.decision} />
@@ -1142,7 +1156,7 @@ function MinutesView({ content }: { content: Content }) {
           <ul className="md-actions">
             {content.action_items.map((a, i) => (
               <li key={i} className={`md-action pri-${a.priority || "medium"}`}>
-                <span className="md-box" aria-hidden="true" />
+                <span className="md-n">{i + 1})</span>
                 <div className="grow">
                   <p className="md-strong">
                     <Emphasize text={a.task} />
@@ -1177,7 +1191,7 @@ function MinutesView({ content }: { content: Content }) {
           <ol className="md-list md-topics">
             {content.topics.map((t, i) => (
               <li key={i}>
-                <span className="md-num">{i + 1}</span>
+                <span className="md-n">{i + 1})</span>
                 <div className="grow">
                   <p className="md-strong">{t.title}</p>
                   <p className="md-note">
@@ -1210,9 +1224,7 @@ function MinutesView({ content }: { content: Content }) {
           <ul className="md-list">
             {content.open_questions.map((q, i) => (
               <li key={i} className="md-question">
-                <span className="md-mark warn" aria-hidden="true">
-                  ?
-                </span>
+                <span className="md-n">{i + 1})</span>
                 <p className="grow">
                   <Emphasize text={q} />
                 </p>
@@ -1690,14 +1702,14 @@ function SeriesPanel({
                 {mins ? (
                   <>
                     {mins.key_points.length > 0 ? (
-                      <ul className="md-highlights compact">
+                      <ol className="md-highlights compact">
                         {mins.key_points.map((p, i) => (
                           <li key={i}>
-                            <IconStar size={12} />
+                            <span className="md-n">{i + 1})</span>
                             <span>{p}</span>
                           </li>
                         ))}
-                      </ul>
+                      </ol>
                     ) : (
                       <p className="small st-summary">{mins.summary}</p>
                     )}

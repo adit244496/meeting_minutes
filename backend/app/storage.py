@@ -136,6 +136,27 @@ def download_to(key: str, dest: Path) -> Path:
     return dest
 
 
+def local_path(key: str) -> Path | None:
+    """The file on disk, or None when objects live in S3.
+
+    A real file can be served with FileResponse, which answers Range requests -
+    which is how browsers play and seek audio. Safari on iOS refuses to play a
+    response that does not support them.
+    """
+    if _using_s3():
+        return None
+    return _local_path(key)
+
+
+def open_range(key: str, range_header: str | None):
+    """S3 equivalent: (body, content_length, content_range). Passes Range through."""
+    kwargs = {"Bucket": settings.s3_bucket, "Key": key}
+    if range_header:
+        kwargs["Range"] = range_header
+    obj = s3().get_object(**kwargs)
+    return obj["Body"], obj.get("ContentLength"), obj.get("ContentRange")
+
+
 def open_stream(key: str):
     """Return a file-like object for streaming a stored object to a client."""
     if _using_s3():

@@ -8,8 +8,8 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -213,10 +213,16 @@ def audio_url(
 @router.get("/{meeting_id}/audio")
 def stream_audio(
     meeting_id: uuid.UUID,
+    request: Request,
     token: str = Query(...),
     db: Session = Depends(get_db),
-) -> StreamingResponse:
-    """Stream the recording. Authorised by the signed token, not a bearer header."""
+):
+    """Stream the recording. Authorised by the signed token, not a bearer header.
+
+    Range requests matter here: a browser asks for a byte range to start
+    playing and to seek, and Safari on iOS refuses to play a response that
+    cannot answer one - the player just shows "Error".
+    """
     if not verify_resource(str(meeting_id), token):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid or expired link")
 
@@ -224,18 +230,36 @@ def stream_audio(
     if meeting is None or not meeting.audio_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No audio for this meeting")
 
-    try:
-        stream = storage.open_stream(meeting.audio_key)
-    except FileNotFoundError:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording file is missing") from None
-
     suffix = meeting.audio_key.rsplit(".", 1)[-1].lower()
     media_type = {
         "webm": "audio/webm", "m4a": "audio/mp4", "mp4": "audio/mp4",
         "mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg",
     }.get(suffix, "application/octet-stream")
 
-    return StreamingResponse(stream, media_type=media_type)
+    path = storage.local_path(meeting.audio_key)
+    if path is not None:
+        if not path.exists():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording file is missing")
+        # FileResponse answers Range requests and sets Content-Length itself.
+        return FileResponse(path, media_type=media_type, headers={"Cache-Control": "private, max-age=3600"})
+
+    range_header = request.headers.get("range")
+    try:
+        body, length, content_range = storage.open_range(meeting.audio_key, range_header)
+    except Exception:  # noqa: BLE001 - a missing object, or a range past the end
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording file is missing") from None
+
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600"}
+    if length is not None:
+        headers["Content-Length"] = str(length)
+    if content_range:
+        headers["Content-Range"] = content_range
+    return StreamingResponse(
+        body,
+        status_code=status.HTTP_206_PARTIAL_CONTENT if content_range else status.HTTP_200_OK,
+        media_type=media_type,
+        headers=headers,
+    )
 
 
 @router.post("/{meeting_id}/speakers", response_model=MeetingDetail)

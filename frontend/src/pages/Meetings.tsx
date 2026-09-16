@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { CompanyLogo } from "../components/CompanyLogo";
 import { Menu } from "../components/Menu";
 import {
   IconAlert,
@@ -256,6 +257,9 @@ export default function Meetings() {
                 <small>processing</small>
               </span>
             )}
+            {/* Inline with the cards on a wide screen; on a phone it sits at the
+                foot of the app instead (see App.tsx). */}
+            <CompanyLogo className="on-wide" />
           </div>
         )}
       </div>

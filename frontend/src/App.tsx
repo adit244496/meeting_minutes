@@ -13,6 +13,7 @@ import {
   IconSun,
 } from "./components/icons";
 import { api, token, type User } from "./lib/api";
+import { CompanyLogo } from "./components/CompanyLogo";
 import { formatElapsed, RecorderProvider, useRecorder } from "./lib/recorder";
 import { useTheme } from "./lib/theme";
 
@@ -238,6 +239,7 @@ export default function App() {
         <RecordingBar />
         <main className="content">
           <Outlet context={{ user }} />
+          <CompanyLogo className="on-phone company-foot" />
         </main>
       </div>
     </div>
