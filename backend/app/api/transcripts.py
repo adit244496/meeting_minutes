@@ -6,18 +6,21 @@ These endpoints hand back a cached translation, or queue one.
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import access, progress, transcripts
+from app import access, cancel, progress, transcripts
 from app.db import get_db
 from app.deps import current_user
 from app.models import MeetingStatus, Segment, User
+from app.worker.celery_app import celery
 from app.worker.tasks import translate_transcript_task
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/meetings", tags=["transcripts"])
 
 LANGUAGE = Query(pattern="^(en|bn|hi)$", description="en | bn | hi")
@@ -105,5 +108,46 @@ def translate(
     # Published before the task is queued, so a page subscribing right after
     # this sees "queued" rather than a stale earlier event.
     progress.publish(mid, "translate", 1, "Queued — waiting for a worker", language=language)
-    translate_transcript_task.delay(mid, language)
+    task = translate_transcript_task.delay(mid, language)
+    cancel.remember_task(mid, "translate", task.id)
     return {"queued": True, "language": language}
+
+
+@router.post("/{meeting_id}/transcript/translate/cancel")
+def cancel_translation(
+    meeting_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Stop the translation that is running.
+
+    Two mechanisms, because a job can be in one of two places. If it is still
+    queued, revoking it means it never runs at all. If a worker already has it,
+    the flag stops it at its next checkpoint - within one model call, since the
+    batches it has not started are dropped.
+
+    Nothing is stored either way: a half-translated transcript would look
+    finished, which is worse than not having one.
+    """
+    access.load_meeting(db, meeting_id, user)
+    mid = str(meeting_id)
+
+    state = progress.last_state(mid) or {}
+    quiet = progress.seconds_since_update(mid)
+    if not (state.get("stage") == "translate" and quiet is not None and quiet < STALE_SECONDS):
+        raise HTTPException(status.HTTP_409_CONFLICT, "No translation is running for this meeting")
+
+    task = cancel.task_id(mid, "translate")
+    cancel.request(mid, "translate", task)
+    if task:
+        try:
+            celery.control.revoke(task)
+        except Exception:  # noqa: BLE001 - the flag alone still stops a running job
+            log.warning("Could not revoke translation task %s", task, exc_info=True)
+
+    # Published now rather than left to the worker: a job that was still queued
+    # is revoked and will never report anything itself.
+    progress.publish(
+        mid, "translate_cancelled", 100, "Translation stopped", language=state.get("language")
+    )
+    return {"cancelled": True}

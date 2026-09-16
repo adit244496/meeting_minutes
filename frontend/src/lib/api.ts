@@ -280,6 +280,7 @@ const FINAL_STAGES = new Set([
   "minutes_failed",
   "translate_done",
   "translate_failed",
+  "translate_cancelled",
 ]);
 
 /** Live processing progress for one meeting over SSE.
@@ -435,6 +436,12 @@ export const api = {
   /** Queues a translation; progress arrives on progressStream as "translate". */
   translateTranscript: (id: string, language: TranscriptLanguage) =>
     request<{ queued: boolean }>(`/api/meetings/${id}/transcript/translate?language=${language}`, {
+      method: "POST",
+    }),
+  /** Stop the translation that is running. Nothing is stored, so the language
+   *  stays untranslated and can be started again. */
+  cancelTranslation: (id: string) =>
+    request<{ cancelled: boolean }>(`/api/meetings/${id}/transcript/translate/cancel`, {
       method: "POST",
     }),
 

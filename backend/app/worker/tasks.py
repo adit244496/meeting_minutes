@@ -90,7 +90,7 @@ def translate_transcript_task(self, meeting_id: str, language: str) -> dict:
     ends with "translate_done" or "translate_failed", so the page can follow it
     the way it follows transcription and minutes.
     """
-    from app import transcripts
+    from app import cancel, transcripts
 
     db = SessionLocal()
     try:
@@ -98,10 +98,19 @@ def translate_transcript_task(self, meeting_id: str, language: str) -> dict:
         if meeting is None:
             return {"translated": False, "reason": "meeting not found"}
 
+        me = self.request.id or ""
+        cancel.remember_task(meeting_id, "translate", me)
+        # Cancelled while it sat in the queue. Revoking only reaches workers
+        # that are running at the time, so a job queued against a stopped
+        # worker arrives here regardless and has to check for itself.
+        if cancel.requested(meeting_id, "translate", me):
+            raise transcripts.TranslationCancelled()
+
         transcripts.translate(
             db,
             meeting,
             language,
+            should_cancel=lambda: cancel.requested(meeting_id, "translate", me),
             # The language rides along, so a page that opens mid-translation
             # knows which one is being made, not just that something is.
             on_progress=lambda fraction, message: progress.publish(
@@ -116,12 +125,21 @@ def translate_transcript_task(self, meeting_id: str, language: str) -> dict:
             meeting_id, "translate_done", 100, f"{language} transcript ready", language=language
         )
         return {"translated": True}
+    except transcripts.TranslationCancelled:
+        # Somebody stopped it. Nothing was stored, and nothing is wrong.
+        log.info("Translation of meeting %s into %s was cancelled", meeting_id, language)
+        db.rollback()
+        progress.publish(
+            meeting_id, "translate_cancelled", 100, "Translation stopped", language=language
+        )
+        return {"translated": False, "reason": "cancelled"}
     except Exception as exc:  # noqa: BLE001 - reported to the page, not retried
         log.exception("Transcript translation failed for meeting %s", meeting_id)
         db.rollback()
         progress.publish(meeting_id, "translate_failed", 100, str(exc), language=language)
         return {"translated": False, "reason": str(exc)}
     finally:
+        cancel.clear(meeting_id, "translate")
         db.close()
 
 

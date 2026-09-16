@@ -457,9 +457,21 @@ export default function MeetingDetail() {
 
   const translateProgress = useMeetingProgress(id, translating !== null, (final) => {
     setTranslating(null);
+    setTranslateStuck(null);
     if (final.stage === "translate_failed") setError(final.message || "Could not translate the transcript");
     refreshTranslations();
   });
+
+  async function stopTranslation() {
+    // Cleared straight away: the worker can be a model call away from noticing,
+    // and leaving the bar spinning after "Stop" reads as a button that did
+    // nothing. Nothing is stored either way, so there is no half state to show.
+    setTranslating(null);
+    setTranslateStuck(null);
+    setTranslateSeed(null);
+    await run(() => api.cancelTranslation(id), "Could not stop the translation");
+    await refreshTranslations();
+  }
 
   // Safety net: the SSE stream can drop (a proxy timeout, the API reloading),
   // and a translation that finished while it was down would otherwise leave the
@@ -934,6 +946,10 @@ export default function MeetingDetail() {
                         <IconRefresh size={13} />
                         Try again
                       </button>
+                      <button className="btn btn-sm" onClick={stopTranslation} disabled={busy}>
+                        <IconClose size={13} />
+                        Stop
+                      </button>
                     </>
                   ) : translating ? (
                     <>
@@ -954,6 +970,15 @@ export default function MeetingDetail() {
                       <span className="dim small mono">
                         {translateProgress?.percent ?? translateSeed?.percent ?? 0}%
                       </span>
+                      <button
+                        className="btn btn-sm"
+                        onClick={stopTranslation}
+                        disabled={busy}
+                        title="Stop translating. Nothing is saved, and you can start it again."
+                      >
+                        <IconStop size={13} />
+                        Stop
+                      </button>
                     </>
                   ) : lang === "original" ? null : translated ? (
                     <>

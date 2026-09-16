@@ -46,6 +46,10 @@ MAX_PARALLEL = 4
 
 _LINE = re.compile(r"^\s*(\d+)\s*\|\s*(.*\S)\s*$")
 
+
+class TranslationCancelled(RuntimeError):
+    """Somebody stopped this translation. Not a failure - nothing is stored."""
+
 SYSTEM_PROMPT = """You translate meeting transcripts.
 
 - Translate every line into {language}, and write it in {language}'s own script.
@@ -90,11 +94,24 @@ def clear(db: Session, meeting_id: uuid.UUID) -> None:
         db.delete(row)
 
 
-def translate(db: Session, meeting: Meeting, language: str, on_progress=None) -> TranscriptTranslation:
-    """Translate the whole transcript into `language` and store it."""
+def translate(
+    db: Session,
+    meeting: Meeting,
+    language: str,
+    on_progress=None,
+    should_cancel=None,
+) -> TranscriptTranslation:
+    """Translate the whole transcript into `language` and store it.
+
+    `should_cancel` is checked between batches and before each one starts, so
+    stopping takes at most one in-flight model call. Nothing is written when a
+    translation is cancelled - a half-translated transcript is worse than none,
+    because it would look finished.
+    """
     if language not in LANGUAGES:
         raise ValueError(f"Unsupported language {language!r}. Supported: {', '.join(LANGUAGES)}")
     report = on_progress or (lambda _fraction, _message: None)
+    cancelled = should_cancel or (lambda: False)
 
     rows = db.execute(
         select(Segment).where(Segment.meeting_id == meeting.id).order_by(Segment.idx)
@@ -112,16 +129,29 @@ def translate(db: Session, meeting: Meeting, language: str, on_progress=None) ->
     name = LANGUAGES[language]
     report(0.01, f"Translating {len(rows)} lines into {name} — {total} parts at once")
 
+    def run(batch):
+        # Checked here too: with more batches than threads, the ones still
+        # waiting for a thread should never start after a cancellation.
+        if cancelled():
+            raise TranslationCancelled()
+        return _translate_batch(batch, language, provider, model, api_key)
+
     with ThreadPoolExecutor(max_workers=min(MAX_PARALLEL, total)) as pool:
-        futures = [
-            pool.submit(_translate_batch, batch, language, provider, model, api_key)
-            for batch in batches
-        ]
-        for done, future in enumerate(as_completed(futures), start=1):
-            # A failed batch raises here and fails the whole translation rather
-            # than quietly storing a half-translated transcript.
-            translated.update(future.result())
-            report(done / total, f"Translating into {name} — {done} of {total} parts done")
+        futures = [pool.submit(run, batch) for batch in batches]
+        try:
+            for done, future in enumerate(as_completed(futures), start=1):
+                # A failed batch raises here and fails the whole translation
+                # rather than quietly storing a half-translated transcript.
+                translated.update(future.result())
+                if cancelled():
+                    raise TranslationCancelled()
+                report(done / total, f"Translating into {name} — {done} of {total} parts done")
+        except Exception:
+            # Drop whatever has not started; the pool still waits for the calls
+            # already in flight, which is why stopping is not instant.
+            for future in futures:
+                future.cancel()
+            raise
 
     # Any line the model skipped keeps its original text, so the transcript
     # stays complete and the reader can see what was not translated.
