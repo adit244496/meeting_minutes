@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from app import access, storage
 from app.db import get_db
 from app.deps import current_user
-from app.models import Meeting, Minutes, Participant, Segment, User
+from app.models import AudioSource, Meeting, Minutes, Participant, Segment, User
 
 router = APIRouter(prefix="/api/meetings", tags=["downloads"])
 # Its own prefix: "/api/meetings/export" would be captured by the
@@ -105,7 +105,7 @@ def _slug(text: str) -> str:
 
 
 def _filename(meeting: Meeting, suffix: str, label: str = "") -> str:
-    stamp = (meeting.started_at or datetime.now()).strftime("%Y-%m-%d")
+    stamp = _local(meeting.started_at or datetime.now()).strftime("%Y-%m-%d")
     tail = f"-{label}" if label else ""
     return f"{stamp}-{_slug(meeting.title)}{tail}.{suffix}"
 
@@ -145,6 +145,31 @@ def _speaker_names(db: Session, meeting_id: uuid.UUID) -> dict[str, str]:
             select(Participant).where(Participant.meeting_id == meeting_id)
         ).scalars()
     }
+
+
+def _local(when: datetime) -> datetime:
+    """UTC in the database, the server's own clock in anything people read.
+
+    Times are stored in UTC, and the browser converts them for the viewer. A
+    downloaded file has no such chance: whatever is written into it is what the
+    reader sees. For a single-site deployment the server's timezone is the one
+    the meeting happened in, which is the only reading that will not confuse
+    somebody comparing the transcript against their calendar.
+    """
+    return when.astimezone() if when.tzinfo else when
+
+
+def _stamp(meeting: Meeting, ms: int) -> str:
+    """How a line's time is written in a transcript people read.
+
+    A meeting recorded here started when `started_at` says it did, so the clock
+    time answers "when was this said". An uploaded file's `started_at` is when
+    somebody uploaded it - possibly days after the meeting - so only the offset
+    into the recording means anything.
+    """
+    if meeting.source == AudioSource.browser_mic and meeting.started_at:
+        return _local(meeting.started_at + timedelta(milliseconds=ms)).strftime("%H:%M:%S")
+    return _clock(ms)
 
 
 def _clock(ms: int, srt: bool = False) -> str:
@@ -227,18 +252,18 @@ def download_transcript(
 def _transcript_text(meeting: Meeting, rows: list[Segment], names: dict[str, str]) -> str:
     lines = [meeting.title, "=" * len(meeting.title)]
     if meeting.started_at:
-        lines.append(meeting.started_at.strftime("%d %B %Y, %H:%M"))
+        lines.append(_local(meeting.started_at).strftime("%d %B %Y, %H:%M"))
     lines.append("")
     for s in rows:
         who = names.get(s.speaker_label, s.speaker_label)
-        lines.append(f"[{_clock(s.start_ms)}] {who}: {s.text}")
+        lines.append(f"[{_stamp(meeting, s.start_ms)}] {who}: {s.text}")
     return "\n".join(lines) + "\n"
 
 
 def _minutes_markdown(meeting: Meeting, minutes: Minutes) -> str:
     out = [f"# {meeting.title}", ""]
     if meeting.started_at:
-        out.append(meeting.started_at.strftime("%d %B %Y, %H:%M"))
+        out.append(_local(meeting.started_at).strftime("%d %B %Y, %H:%M"))
         out.append("")
     if meeting.agenda:
         out += ["## Agenda", "", meeting.agenda, ""]
@@ -385,7 +410,7 @@ def _minutes_docx(meeting: Meeting, minutes: Minutes) -> bytes:
         doc.add_heading(meeting.title, level=0)
         meta = [f"{minutes.kind.capitalize()} minutes"]
         if meeting.started_at:
-            meta.append(meeting.started_at.strftime("%d %B %Y, %H:%M"))
+            meta.append(_local(meeting.started_at).strftime("%d %B %Y, %H:%M"))
         meta.append(f"v{minutes.version}")
         _run(doc.add_paragraph(), " · ".join(meta), color="muted", size=10)
 
@@ -500,10 +525,10 @@ def _transcript_docx(meeting: Meeting, rows: list[Segment], names: dict[str, str
     def build(doc) -> None:
         doc.add_heading(meeting.title, level=0)
         if meeting.started_at:
-            doc.add_paragraph(meeting.started_at.strftime("%d %B %Y, %H:%M") + " · Transcript")
+            doc.add_paragraph(_local(meeting.started_at).strftime("%d %B %Y, %H:%M") + " · Transcript")
         for s in rows:
             p = doc.add_paragraph()
-            p.add_run(f"[{_clock(s.start_ms)}] ").italic = True
+            p.add_run(f"[{_stamp(meeting, s.start_ms)}] ").italic = True
             p.add_run(f"{names.get(s.speaker_label, s.speaker_label)}: ").bold = True
             p.add_run(s.text)
 

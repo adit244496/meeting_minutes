@@ -1892,3 +1892,14 @@ body { background: var(--bg); }
 }
 .agenda-card textarea { width: 100%; resize: vertical; min-height: 84px; }
 .agenda-add { margin: -2px 0 10px; }
+
+/* The transcript's Time column header doubles as a switch between clock time
+   and time into the recording. */
+.time-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 0; background: none; padding: 0; cursor: pointer;
+  font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
+}
+.time-toggle:hover { color: var(--accent); }
+.time-toggle svg { opacity: 0.6; }
+.time-toggle:hover svg { opacity: 1; }

@@ -114,6 +114,8 @@ export default function MeetingDetail() {
   // Collapsed by default: the list matters when somebody is naming voices, and
   // is in the way the rest of the time.
   const [showSpeakers, setShowSpeakers] = useState(false);
+  // null means "whatever suits this meeting"; see `showClock` below.
+  const [clockTimes, setClockTimes] = useState<boolean | null>(null);
 
   // Following the recording through the transcript: the line being spoken is
   // highlighted, and the view keeps it in sight while the audio plays.
@@ -531,6 +533,14 @@ export default function MeetingDetail() {
   if (!meeting) {
     return <p className="dim">{error || "Loading…"}</p>;
   }
+
+  // Clock times are only honest when the meeting was recorded here: then
+  // started_at is when people actually started talking. For an uploaded file
+  // it is when the file was uploaded, which could be days later, so offsets
+  // into the recording are the only truthful reading. Either way the choice is
+  // a viewer's to override.
+  const recordedHere = meeting.source === "browser_mic";
+  const showClock = clockTimes ?? recordedHere;
 
   const names = new Map(meeting.participants.map((p) => [p.speaker_label, p]));
   const minutes = meeting.minutes.find((m) => m.kind === kind) ?? null;
@@ -1011,11 +1021,24 @@ export default function MeetingDetail() {
                   Follow the recording
                 </label>
               )}
-              <div className="seg seg-head" aria-hidden="true">
-                <span>Time</span>
-                <span>Speaker</span>
-                <span>Language</span>
-                <span>Text</span>
+              <div className="seg seg-head">
+                {/* The header doubles as the control: the column it labels is
+                    the thing being switched, and it costs no extra row. */}
+                <button
+                  className="time-toggle"
+                  onClick={() => setClockTimes(!showClock)}
+                  title={
+                    showClock
+                      ? `Clock time, starting ${new Date(meeting.started_at).toLocaleTimeString()}. Click for time into the recording.`
+                      : "Time into the recording. Click for clock time."
+                  }
+                >
+                  {showClock ? "Time of day" : "Time"}
+                  <IconClock size={11} />
+                </button>
+                <span aria-hidden="true">Speaker</span>
+                <span aria-hidden="true">Language</span>
+                <span aria-hidden="true">Text</span>
               </div>
               {meeting.segments.map((s) => {
                 const participant = names.get(s.speaker_label);
@@ -1031,16 +1054,17 @@ export default function MeetingDetail() {
                       onClick={() => playFrom(s.start_ms)}
                       disabled={!audioSrc || audioFailed}
                       title={
-                        isLive
-                          ? `${formatTimestamp(s.start_ms)} into the recording`
+                        showClock
+                          ? `${formatTimestamp(s.start_ms)} into the recording` +
+                            (audioSrc ? " — click to play from here" : "")
                           : audioSrc
                             ? "Play the recording from here"
                             : "No recording available"
                       }
                     >
-                      {/* While it is still being recorded, the clock time is
-                          what tells people when something was said. */}
-                      {isLive ? clockAt(meeting.started_at, s.start_ms, true) : formatTimestamp(s.start_ms)}
+                      {showClock
+                        ? clockAt(meeting.started_at, s.start_ms, true)
+                        : formatTimestamp(s.start_ms)}
                     </button>
                     <span className="who">{participant?.display_name ?? s.speaker_label}</span>
                     <span className={`lang ${mixed ? "mixed" : ""}`}>
