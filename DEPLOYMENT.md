@@ -190,8 +190,36 @@ sudo certbot --nginx -d neominutes.ambujaneotia.com
 ```
 
 certbot rewrites that file in place to add the TLS server and the http->https
-redirect; leave its edits alone. Renewal is automatic - `sudo certbot renew
---dry-run` proves it.
+redirect; leave its edits alone.
+
+### Certificate renewal
+
+Certificates last 90 days and certbot renews them itself, from a systemd timer
+it installs. Check it, and prove a renewal works:
+
+```bash
+systemctl list-timers | grep -i certbot     # should list a timer
+sudo certbot renew --dry-run                # staging run; does not touch the real cert
+sudo certbot certificates                   # what exists, and expiry dates
+```
+
+If no timer is listed, enable it (name depends on how certbot was installed):
+
+```bash
+sudo systemctl enable --now certbot.timer               # apt
+sudo systemctl enable --now snap.certbot.renew.timer    # snap
+```
+
+Make nginx pick up a renewed certificate. The nginx plugin normally reloads it;
+this records the hook in the renewal config so every future renewal does:
+
+```bash
+sudo certbot renew --deploy-hook "systemctl reload nginx"
+```
+
+**Leave port 80 open.** Renewal validates over HTTP, so closing 80 after moving
+to HTTPS breaks renewal about 60 days later - the redirect to HTTPS is harmless.
+The timer runs twice a day and does nothing until fewer than 30 days remain.
 
 Nothing in the app changes: the frontend is built with an empty `VITE_API_URL`,
 so it calls whatever origin it is served from, and the API serves the frontend
