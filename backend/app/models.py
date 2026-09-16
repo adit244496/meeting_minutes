@@ -243,6 +243,29 @@ class Segment(Base):
     meeting: Mapped[Meeting] = relationship(back_populates="segments")
 
 
+class TranscriptTranslation(Base):
+    """One meeting's transcript rendered into another language.
+
+    The transcript in `segments` is never touched: it stays verbatim, in the
+    languages and scripts people actually spoke. A translation is a separate,
+    cached artifact - generated on request, kept so the next reader gets it
+    instantly, and rebuilt whenever the transcript is.
+    """
+
+    __tablename__ = "transcript_translations"
+    __table_args__ = (UniqueConstraint("meeting_id", "language", name="uq_translation_meeting_language"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    language: Mapped[str] = mapped_column(String(16))
+    # [{idx, text}] - one entry per segment, in transcript order.
+    segments: Mapped[list] = mapped_column(JSON, default=list)
+    model: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class AppSetting(Base):
     """One admin-controlled setting.
 

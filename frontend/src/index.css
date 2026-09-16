@@ -1731,3 +1731,16 @@ body { background: var(--bg); }
 
 /* A paused recording: steady amber, not a pulsing red. */
 .live-dot.paused { background: var(--warn); animation: none; box-shadow: none; }
+
+/* ---------- transcript translation ---------- */
+.translation-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px; font-size: 0.85rem;
+  background: var(--accent-soft); color: var(--text);
+  border-bottom: 1px solid var(--accent-line);
+}
+.translation-bar.is-working { background: var(--warn-soft); border-bottom-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+@media (max-width: 720px) {
+  .tabbar > .row { width: 100%; justify-content: space-between; }
+  .tabbar .segmented-sm { overflow-x: auto; }
+}

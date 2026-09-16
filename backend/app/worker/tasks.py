@@ -82,6 +82,41 @@ def live_transcribe_task(self, meeting_id: str) -> dict:
     return result
 
 
+@celery.task(name="transcripts.translate", bind=True, max_retries=0)
+def translate_transcript_task(self, meeting_id: str, language: str) -> dict:
+    """Translate a meeting's transcript into one language, in the background.
+
+    Progress goes out on the meeting's channel under the "translate" stage and
+    ends with "translate_done" or "translate_failed", so the page can follow it
+    the way it follows transcription and minutes.
+    """
+    from app import transcripts
+
+    db = SessionLocal()
+    try:
+        meeting = db.get(Meeting, uuid.UUID(meeting_id))
+        if meeting is None:
+            return {"translated": False, "reason": "meeting not found"}
+
+        transcripts.translate(
+            db,
+            meeting,
+            language,
+            on_progress=lambda fraction, message: progress.publish(
+                meeting_id, "translate", max(2, min(99, round(fraction * 100))), message
+            ),
+        )
+        progress.publish(meeting_id, "translate_done", 100, f"{language} transcript ready")
+        return {"translated": True}
+    except Exception as exc:  # noqa: BLE001 - reported to the page, not retried
+        log.exception("Transcript translation failed for meeting %s", meeting_id)
+        db.rollback()
+        progress.publish(meeting_id, "translate_failed", 100, str(exc))
+        return {"translated": False, "reason": str(exc)}
+    finally:
+        db.close()
+
+
 @celery.task(name="minutes.generate", bind=True, max_retries=0)
 def generate_minutes_task(
     self,

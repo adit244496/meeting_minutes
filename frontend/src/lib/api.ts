@@ -144,6 +144,22 @@ export interface Segment {
 
 export type MinutesKind = "short" | "detailed";
 
+/** Languages a transcript can be translated into, in the order they are offered. */
+export const TRANSCRIPT_LANGUAGES = [
+  ["en", "English"],
+  ["bn", "Bengali"],
+  ["hi", "Hindi"],
+] as const;
+
+export type TranscriptLanguage = (typeof TRANSCRIPT_LANGUAGES)[number][0];
+
+export interface TranscriptTranslation {
+  language: TranscriptLanguage;
+  model: string;
+  created_at: string;
+  segments: { idx: number; text: string }[];
+}
+
 export interface Minutes {
   kind: MinutesKind;
   summary: string;
@@ -243,7 +259,14 @@ export interface Progress {
   ts?: number;
 }
 
-const FINAL_STAGES = new Set(["done", "failed", "minutes_done", "minutes_failed"]);
+const FINAL_STAGES = new Set([
+  "done",
+  "failed",
+  "minutes_done",
+  "minutes_failed",
+  "translate_done",
+  "translate_failed",
+]);
 
 /** Live processing progress for one meeting over SSE.
  *
@@ -346,6 +369,19 @@ export const api = {
   liveStart: (id: string) => request<{ live: boolean }>(`/api/meetings/${id}/live/start`, { method: "POST" }),
   /** Save a live recording from the server's copy, when the recording tab is gone. */
   liveFinish: (id: string) => request<Meeting>(`/api/meetings/${id}/live/finish`, { method: "POST" }),
+  /** Languages this transcript has been translated into, and any job running. */
+  listTranslations: (id: string) =>
+    request<{ languages: TranscriptLanguage[]; in_progress: boolean; message: string | null }>(
+      `/api/meetings/${id}/transcript/translations`,
+    ),
+  getTranslation: (id: string, language: TranscriptLanguage) =>
+    request<TranscriptTranslation>(`/api/meetings/${id}/transcript?language=${language}`),
+  /** Queues a translation; progress arrives on progressStream as "translate". */
+  translateTranscript: (id: string, language: TranscriptLanguage) =>
+    request<{ queued: boolean }>(`/api/meetings/${id}/transcript/translate?language=${language}`, {
+      method: "POST",
+    }),
+
   liveStop: (id: string) => request<{ live: boolean }>(`/api/meetings/${id}/live/stop`, { method: "POST" }),
   /** Send the next piece of a live recording. Resolves to the next sequence
    *  number the server expects - lower than `seq + 1` when pieces went missing. */

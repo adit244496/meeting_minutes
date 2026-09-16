@@ -19,6 +19,7 @@ from app.api import (
     minutes,
     series,
     settings as settings_api,
+    transcripts as transcripts_api,
     users,
 )
 from app.config import settings
@@ -267,6 +268,7 @@ app.include_router(downloads.router)
 app.include_router(downloads.export_router)
 app.include_router(series.router)
 app.include_router(live_api.router)
+app.include_router(transcripts_api.router)
 
 
 @app.get("/health", tags=["health"])

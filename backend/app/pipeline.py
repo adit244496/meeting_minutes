@@ -32,7 +32,7 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import credentials, progress, storage
+from app import credentials, progress, storage, transcripts
 from app.asr import get_provider
 from app.asr.base import ProviderBusyError
 from app.audio import duration_seconds, to_wav16k_mono
@@ -278,6 +278,8 @@ def _replace_transcript(db: Session, meeting: Meeting, result, resolutions) -> N
 
     for idx, seg in enumerate(result.segments):
         db.add(segment_row(meeting.id, idx, seg, result.language))
+    # Translations were made from the transcript that has just been replaced.
+    transcripts.clear(db, meeting.id)
     db.flush()
 
 

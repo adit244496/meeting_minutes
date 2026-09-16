@@ -37,6 +37,8 @@ import {
   type Progress,
   type Series,
   type SeriesMeeting,
+  type TranscriptLanguage,
+  TRANSCRIPT_LANGUAGES,
   type SeriesSuggestion,
   type User,
   useMeetingProgress,
@@ -67,8 +69,8 @@ const SOURCE_LABEL: Record<string, string> = {
 
 const LANGUAGES: [string, string][] = [
   ["en", "English"],
-  ["hi", "Hindi"],
   ["bn", "Bengali"],
+  ["hi", "Hindi"],
 ];
 
 export default function MeetingDetail() {
@@ -92,6 +94,14 @@ export default function MeetingDetail() {
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<MinutesVersion[]>([]);
   const [preview, setPreview] = useState<MinutesVersion | null>(null);
+
+  // The transcript is always stored verbatim, in the languages people spoke.
+  // A translation is a separate, cached rendering shown in its place.
+  const [lang, setLang] = useState<"original" | TranscriptLanguage>("original");
+  const [translated, setTranslated] = useState<Map<number, string> | null>(null);
+  const [translatedBy, setTranslatedBy] = useState("");
+  const [ready, setReady] = useState<TranscriptLanguage[]>([]);
+  const [translating, setTranslating] = useState<TranscriptLanguage | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -323,6 +333,59 @@ export default function MeetingDetail() {
     if (!(await requestRemoteControl(id, next))) {
       setError("The tab that is recording this meeting is closed, so it cannot be paused. Stop the recording instead.");
     }
+  }
+
+  // Which languages are ready, and whether one is being made right now.
+  const refreshTranslations = useCallback(async () => {
+    try {
+      const state = await api.listTranslations(id);
+      setReady(state.languages);
+      if (!state.in_progress) setTranslating(null);
+      return state;
+    } catch {
+      return null;
+    }
+  }, [id]);
+
+  useEffect(() => {
+    refreshTranslations();
+  }, [refreshTranslations]);
+
+  // Load (or clear) the translation being viewed.
+  useEffect(() => {
+    if (lang === "original") {
+      setTranslated(null);
+      setTranslatedBy("");
+      return;
+    }
+    if (!ready.includes(lang)) {
+      setTranslated(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .getTranslation(id, lang)
+      .then((t) => {
+        if (cancelled) return;
+        setTranslated(new Map(t.segments.map((s) => [s.idx, s.text])));
+        setTranslatedBy(t.model);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [id, lang, ready]);
+
+  const translateProgress = useMeetingProgress(id, translating !== null, (final) => {
+    setTranslating(null);
+    if (final.stage === "translate_failed") setError(final.message || "Could not translate the transcript");
+    refreshTranslations();
+  });
+
+  async function translateTo(target: TranscriptLanguage) {
+    setLang(target);
+    const ok = await run(() => api.translateTranscript(id, target), "Could not start the translation");
+    if (ok) setTranslating(target);
   }
 
   async function deleteRecording() {
@@ -627,11 +690,32 @@ export default function MeetingDetail() {
         </div>
 
         {tab === "transcript" && hasTranscript && (
-          <Menu label="Download" icon={<IconDownload size={14} />}>
+          <div className="row" style={{ gap: 8 }}>
+            <div className="segmented segmented-sm" role="tablist" aria-label="Transcript language">
+              <button role="tab" aria-selected={lang === "original"} onClick={() => setLang("original")}>
+                Original
+              </button>
+              {TRANSCRIPT_LANGUAGES.map(([code, name]) => (
+                <button
+                  key={code}
+                  role="tab"
+                  aria-selected={lang === code}
+                  onClick={() => setLang(code)}
+                  title={ready.includes(code) ? `Translated into ${name}` : `Translate into ${name}`}
+                >
+                  {name}
+                  {!ready.includes(code) && translating !== code && (
+                    <span className="dot-empty" aria-label="not translated yet" />
+                  )}
+                </button>
+              ))}
+            </div>
+            <Menu label="Download" icon={<IconDownload size={14} />}>
             <MenuItem onClick={() => download("transcript?fmt=docx", "transcript.docx")}>Word (.docx)</MenuItem>
             <MenuItem onClick={() => download("transcript?fmt=txt", "transcript.txt")}>Text (.txt)</MenuItem>
             <MenuItem onClick={() => download("transcript?fmt=srt", "transcript.srt")}>Subtitles (.srt)</MenuItem>
-          </Menu>
+            </Menu>
+          </div>
         )}
 
         {tab === "minutes" && (
@@ -650,6 +734,40 @@ export default function MeetingDetail() {
         <div className="card">
           {hasTranscript ? (
             <>
+              {lang !== "original" && (
+                <div className={`translation-bar ${translating === lang ? "is-working" : ""}`}>
+                  {translating === lang ? (
+                    <>
+                      <span className="grow">
+                        {translateProgress?.message ?? "Translating…"} The original transcript is kept unchanged.
+                      </span>
+                      <span className="dim small mono">{translateProgress?.percent ?? 0}%</span>
+                    </>
+                  ) : translated ? (
+                    <>
+                      <span className="grow">
+                        Translated into {TRANSCRIPT_LANGUAGES.find(([c]) => c === lang)?.[1]}
+                        {translatedBy ? ` by ${translatedBy}` : ""}. The original is kept as spoken.
+                      </span>
+                      <button className="btn btn-sm" onClick={() => translateTo(lang)} disabled={busy}>
+                        <IconRefresh size={13} />
+                        Redo
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="grow">
+                        This transcript has not been translated into{" "}
+                        {TRANSCRIPT_LANGUAGES.find(([c]) => c === lang)?.[1]} yet. The original stays as spoken.
+                      </span>
+                      <button className="btn btn-sm btn-primary" onClick={() => translateTo(lang)} disabled={busy}>
+                        <IconSparkle size={13} />
+                        Translate
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
               <div className="seg seg-head" aria-hidden="true">
                 <span>Time</span>
                 <span>Speaker</span>
@@ -666,7 +784,7 @@ export default function MeetingDetail() {
                     <span className={`lang ${mixed ? "mixed" : ""}`}>
                       {mixed ? "mixed" : s.language || "—"}
                     </span>
-                    <span className="said">{s.text}</span>
+                    <span className="said">{translated?.get(s.idx) ?? s.text}</span>
                   </div>
                 );
               })}
