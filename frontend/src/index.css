@@ -1038,14 +1038,14 @@ thead th { font-size: 0.66rem; }
    grow, and every row must grow with it or the columns stop lining up, since
    each row is its own grid. Hence the class on every row rather than one on a
    container. */
-.seg.clock { grid-template-columns: 68px 120px 76px minmax(0, 1fr); }
+.seg.clock { grid-template-columns: 78px 120px 76px minmax(0, 1fr); }
 .seg .ts { font-size: 0.74rem; padding-top: 1px; white-space: nowrap; }
 .seg .who { font-size: 0.82rem; }
 .seg .lang { font-size: 0.66rem; }
 .seg .said { font-size: 0.9rem; }
 @media (max-width: 760px) {
   .seg { grid-template-columns: 44px minmax(0, 1fr) auto; gap: 2px 10px; padding: 8px 12px; }
-  .seg.clock { grid-template-columns: 62px minmax(0, 1fr) auto; }
+  .seg.clock { grid-template-columns: 70px minmax(0, 1fr) auto; }
   .seg .said { grid-column: 1 / -1; }
   .seg.seg-head { display: none; }
 }

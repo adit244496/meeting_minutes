@@ -592,7 +592,9 @@ export function clockAt(startedAt: string, ms: number, seconds = false): string 
     // 24-hour regardless of locale. These sit in a narrow monospace column,
     // one per line, where a trailing "PM" costs a third of the width and buys
     // nothing: the reader already knows which afternoon the meeting was.
-    hour12: false,
+    // h23 rather than hour12:false, which leaves some locales free to write
+    // midnight as 24:05 instead of 00:05.
+    hourCycle: "h23",
     hour: "2-digit",
     minute: "2-digit",
     ...(seconds ? { second: "2-digit" } : {}),
