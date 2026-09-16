@@ -12,6 +12,8 @@ import {
   IconEdit,
   IconHistory,
   IconMeetings,
+  IconPause,
+  IconPlay,
   IconPlus,
   IconRefresh,
   IconRepeat,
@@ -39,7 +41,7 @@ import {
   type User,
   useMeetingProgress,
 } from "../lib/api";
-import { formatElapsed, requestRemoteStop, useRecorder } from "../lib/recorder";
+import { formatElapsed, requestRemoteControl, useRecorder } from "../lib/recorder";
 
 const ACTIVE = new Set(["created", "uploaded", "processing"]);
 
@@ -293,7 +295,7 @@ export default function MeetingDetail() {
       return;
     }
     // Recording in another tab: ask it to stop and upload.
-    if (await requestRemoteStop(id)) {
+    if (await requestRemoteControl(id, "stop")) {
       setTimeout(load, 4000);
       return;
     }
@@ -310,6 +312,17 @@ export default function MeetingDetail() {
       await api.liveFinish(id);
       await load();
     }, "Could not save the recording");
+  }
+
+  /** Pause or resume: this tab if it owns the recorder, otherwise the tab that does. */
+  async function pauseLive(next: "pause" | "resume") {
+    if (recorder.meetingId === id) {
+      next === "pause" ? recorder.pause() : recorder.resume();
+      return;
+    }
+    if (!(await requestRemoteControl(id, next))) {
+      setError("The tab that is recording this meeting is closed, so it cannot be paused. Stop the recording instead.");
+    }
   }
 
   async function deleteRecording() {
@@ -492,7 +505,9 @@ export default function MeetingDetail() {
           <span className="live-dot" aria-hidden="true" />
           <span className="grow">
             <strong>
-              Recording{recorder.meetingId === id ? ` ${formatElapsed(recorder.seconds)}` : " in progress"}.
+              {recorder.meetingId === id && recorder.status === "paused"
+                ? `Paused at ${formatElapsed(recorder.seconds)}.`
+                : `Recording${recorder.meetingId === id ? ` ${formatElapsed(recorder.seconds)}` : " in progress"}.`}
             </strong>{" "}
             The transcript is a live preview
             {meeting.live_transcribed_until
@@ -500,9 +515,20 @@ export default function MeetingDetail() {
               : ""}
             . The final transcript and minutes are made when recording stops.
           </span>
+          {recorder.meetingId === id && recorder.status === "paused" ? (
+            <button className="btn btn-sm btn-primary" onClick={() => pauseLive("resume")} disabled={busy}>
+              <IconPlay size={14} />
+              Resume
+            </button>
+          ) : (
+            <button className="btn btn-sm" onClick={() => pauseLive("pause")} disabled={busy}>
+              <IconPause size={14} />
+              Pause
+            </button>
+          )}
           <button className="btn btn-sm btn-rec" onClick={stopLive} disabled={busy}>
             <IconStop size={14} />
-            Stop recording
+            Stop
           </button>
         </div>
       )}

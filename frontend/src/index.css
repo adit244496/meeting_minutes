@@ -1728,3 +1728,6 @@ body { background: var(--bg); }
   .minutes-doc { padding: 0 12px 4px; }
   .minutes-doc section { padding: 8px 0; }
 }
+
+/* A paused recording: steady amber, not a pulsing red. */
+.live-dot.paused { background: var(--warn); animation: none; box-shadow: none; }

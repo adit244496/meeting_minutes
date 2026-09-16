@@ -8,6 +8,8 @@ import {
   IconMenu,
   IconMoon,
   IconSignOut,
+  IconPause,
+  IconPlay,
   IconSliders,
   IconStop,
   IconSun,
@@ -35,28 +37,43 @@ function RecordingBar() {
         </>
       ) : (
         <>
-          <span className="live-dot" aria-hidden="true" />
+          <span className={`live-dot ${r.status === "paused" ? "paused" : ""}`} aria-hidden="true" />
           <span className="recording-bar-text grow">
             <strong>
               {r.status === "starting"
                 ? "Starting recording…"
                 : r.status === "saving"
                   ? "Saving the recording…"
-                  : `Recording ${formatElapsed(r.seconds)}`}
+                  : r.status === "paused"
+                    ? `Paused at ${formatElapsed(r.seconds)}`
+                    : `Recording ${formatElapsed(r.seconds)}`}
             </strong>
             {r.title && <span className="dim"> · {r.title}</span>}
             {r.status === "recording" && r.liveOn && <span className="dim"> · live transcript on</span>}
           </span>
-          {r.meetingId && !onMeetingPage && r.status === "recording" && (
+          {r.meetingId && !onMeetingPage && (r.status === "recording" || r.status === "paused") && (
             <Link className="small" to={`/meetings/${r.meetingId}`}>
               View live transcript
             </Link>
           )}
-          {r.status === "recording" && (
-            <button className="btn btn-sm btn-rec" onClick={r.stop}>
-              <IconStop size={14} />
-              Stop
-            </button>
+          {(r.status === "recording" || r.status === "paused") && (
+            <>
+              {r.status === "recording" ? (
+                <button className="btn btn-sm" onClick={r.pause}>
+                  <IconPause size={14} />
+                  Pause
+                </button>
+              ) : (
+                <button className="btn btn-sm btn-primary" onClick={r.resume}>
+                  <IconPlay size={14} />
+                  Resume
+                </button>
+              )}
+              <button className="btn btn-sm btn-rec" onClick={r.stop}>
+                <IconStop size={14} />
+                Stop
+              </button>
+            </>
           )}
         </>
       )}

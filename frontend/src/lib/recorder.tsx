@@ -18,9 +18,9 @@ import { api } from "./api";
 const LIVE_SEND_MS = 30_000;
 const CHANNEL = "neo-minutes-recorder";
 
-type ChannelMessage = { type: "stop" | "ping" | "pong"; meetingId: string };
+type ChannelMessage = { type: "stop" | "pause" | "resume" | "ping" | "pong"; meetingId: string };
 
-export type RecorderStatus = "idle" | "starting" | "recording" | "saving";
+export type RecorderStatus = "idle" | "starting" | "recording" | "paused" | "saving";
 
 export interface StartOptions {
   title: string;
@@ -41,6 +41,8 @@ interface RecorderValue {
   savedCount: number;
   start: (options: StartOptions) => Promise<void>;
   stop: () => void;
+  pause: () => void;
+  resume: () => void;
   retryUpload: () => void;
   clearError: () => void;
 }
@@ -154,6 +156,24 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     if (recorder.current && recorder.current.state !== "inactive") recorder.current.stop();
   }, []);
 
+  const pause = useCallback(() => {
+    if (recorder.current?.state !== "recording") return;
+    recorder.current.pause();
+    // The clock counts recorded time, so it stops with the microphone.
+    if (clock.current) clearInterval(clock.current);
+    setStatus("paused");
+    // Send what is already recorded, so the live transcript catches up rather
+    // than waiting for the recording to resume.
+    flush();
+  }, [flush]);
+
+  const resume = useCallback(() => {
+    if (recorder.current?.state !== "paused") return;
+    recorder.current.resume();
+    clock.current = setInterval(() => setSeconds((n) => n + 1), 1000);
+    setStatus("recording");
+  }, []);
+
   const start = useCallback(
     async (options: StartOptions) => {
       if (recorder.current && recorder.current.state !== "inactive") return;
@@ -254,14 +274,16 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       const current = session.current?.meetingId;
       if (!current || event.data.meetingId !== current) return;
       if (event.data.type === "stop") stop();
+      if (event.data.type === "pause") pause();
+      if (event.data.type === "resume") resume();
       if (event.data.type === "ping") ch.postMessage({ type: "pong", meetingId: current } satisfies ChannelMessage);
     };
     return () => ch.close();
-  }, [stop]);
+  }, [stop, pause, resume]);
 
   // Closing or reloading the tab ends the recording, so warn first.
   useEffect(() => {
-    if (status !== "recording" && status !== "saving") return;
+    if (status !== "recording" && status !== "paused" && status !== "saving") return;
     const warn = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = "";
@@ -282,6 +304,8 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       savedCount,
       start,
       stop,
+      pause,
+      resume,
       retryUpload: () => {
         if (!failedUpload) return;
         setError("");
@@ -289,15 +313,19 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       },
       clearError: () => setError(""),
     }),
-    [status, meetingId, title, seconds, liveOn, error, failedUpload, savedCount, start, stop, upload],
+    [status, meetingId, title, seconds, liveOn, error, failedUpload, savedCount, start, stop, pause, resume, upload],
   );
 
   return <RecorderContext.Provider value={value}>{children}</RecorderContext.Provider>;
 }
 
-/** Ask whichever tab is recording `meetingId` to stop. Resolves true if a tab
- *  answered, false if none did (the recording tab was closed). */
-export function requestRemoteStop(meetingId: string, waitMs = 1500): Promise<boolean> {
+/** Ask whichever tab is recording `meetingId` to stop, pause or resume.
+ *  Resolves true if a tab answered, false if none did (its tab was closed). */
+export function requestRemoteControl(
+  meetingId: string,
+  action: "stop" | "pause" | "resume" = "stop",
+  waitMs = 1500,
+): Promise<boolean> {
   if (typeof BroadcastChannel === "undefined") return Promise.resolve(false);
   return new Promise((resolve) => {
     const ch = new BroadcastChannel(CHANNEL);
@@ -308,7 +336,7 @@ export function requestRemoteStop(meetingId: string, waitMs = 1500): Promise<boo
     ch.onmessage = (event: MessageEvent<ChannelMessage>) => {
       if (event.data.type === "pong" && event.data.meetingId === meetingId) {
         clearTimeout(timer);
-        ch.postMessage({ type: "stop", meetingId } satisfies ChannelMessage);
+        ch.postMessage({ type: action, meetingId } satisfies ChannelMessage);
         ch.close();
         resolve(true);
       }

@@ -47,7 +47,20 @@ export const IconStop = ({ size = 17, className }: Props) => (
   </svg>
 );
 
-export const IconUpload = ({ size = 17, className }: Props) => (
+export const IconPause = ({ size = 15, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <rect x="7" y="5.5" width="3.6" height="13" rx="1.2" fill="currentColor" stroke="none" />
+    <rect x="13.4" y="5.5" width="3.6" height="13" rx="1.2" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+export const IconPlay = ({ size = 15, className }: Props) => (
+  <svg {...base(size)} className={className}>
+    <path d="M8 5.5 18.5 12 8 18.5z" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+export const IconUpload =({ size = 17, className }: Props) => (
   <svg {...base(size)} className={className}>
     <path d="M12 16V4M8 7.5 12 3.5l4 4" />
     <path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16" />

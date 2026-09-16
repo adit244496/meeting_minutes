@@ -8,6 +8,8 @@ import {
   IconClose,
   IconDownload,
   IconMic,
+  IconPause,
+  IconPlay,
   IconRepeat,
   IconSearch,
   IconStop,
@@ -138,7 +140,8 @@ export default function Meetings() {
   const [stats, setStats] = useState<{ total: number; hours: number; done: number; active: number } | null>(null);
 
   const recorder = useRecorder();
-  const recording = recorder.status === "recording" || recorder.status === "starting";
+  const recording =
+    recorder.status === "recording" || recorder.status === "starting" || recorder.status === "paused";
   const fileInput = useRef<HTMLInputElement>(null);
   const mic = useMemo(micSupport, []);
 
@@ -319,10 +322,24 @@ export default function Meetings() {
                 ? "Saving…"
                 : "Record"}
         </button>
-        <button className="btn" onClick={() => fileInput.current?.click()} disabled={uploading || recording}>
-          <IconUpload size={15} />
-          {uploading ? "Uploading…" : "Upload"}
-        </button>
+        {recording ? (
+          recorder.status === "paused" ? (
+            <button className="btn btn-primary" onClick={recorder.resume}>
+              <IconPlay size={15} />
+              Resume
+            </button>
+          ) : (
+            <button className="btn" onClick={recorder.pause} disabled={recorder.status !== "recording"}>
+              <IconPause size={15} />
+              Pause
+            </button>
+          )
+        ) : (
+          <button className="btn" onClick={() => fileInput.current?.click()} disabled={uploading}>
+            <IconUpload size={15} />
+            {uploading ? "Uploading…" : "Upload"}
+          </button>
+        )}
         <input
           ref={fileInput}
           type="file"
@@ -344,12 +361,12 @@ export default function Meetings() {
         </div>
       )}
 
-      {recorder.status === "recording" && recorder.meetingId && recorder.liveOn && (
+      {(recorder.status === "recording" || recorder.status === "paused") && recorder.meetingId && recorder.liveOn && (
         <div className="card live-card">
           <div className="card-head card-head-tight">
             <div className="row" style={{ gap: 8 }}>
-              <span className="live-dot" aria-hidden="true" />
-              <h3>Live transcript</h3>
+              <span className={`live-dot ${recorder.status === "paused" ? "paused" : ""}`} aria-hidden="true" />
+              <h3>{recorder.status === "paused" ? "Live transcript — paused" : "Live transcript"}</h3>
             </div>
             <Link className="small" to={`/meetings/${recorder.meetingId}`}>
               Open meeting
