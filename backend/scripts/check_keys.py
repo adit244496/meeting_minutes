@@ -28,13 +28,18 @@ CHECKS = {
 }
 
 
-def suspicious(value: str) -> str:
+def suspicious(key: str, value: str, seen: dict[str, str]) -> str:
     if value != value.strip():
         return "  <-- has surrounding whitespace, which is part of the key as sent"
     if len(value) >= 2 and value[0] in "\"'" and value[-1] == value[0]:
         return "  <-- still wrapped in quotes; remove them from .env"
     if "\n" in value or "\r" in value:
         return "  <-- contains a newline"
+    if value in seen:
+        return f"  <-- the same key is also set as {seen[value]}; one of the two is in the wrong field"
+    foreign = credentials._foreign_key(key, value)
+    if foreign:
+        return f"  <-- this looks like {foreign} key, not this provider's"
     return ""
 
 
@@ -86,6 +91,7 @@ def main() -> int:
         print()
 
         failed = 0
+        seen: dict[str, str] = {}
         for key, name in CHECKS.items():
             value = credentials.resolve(db, key)
             source = status[key].source if key in status else "unset"
@@ -93,7 +99,9 @@ def main() -> int:
                 print(f"{name:<16} no key ({source})")
                 continue
 
-            print(f"{name:<16} {credentials.mask(value)}  {len(value)} chars, from the {source}{suspicious(value)}")
+            note = suspicious(key, value, seen)
+            seen[value] = name
+            print(f"{name:<16} {credentials.mask(value)}  {len(value)} chars, from the {source}{note}")
             try:
                 print(f"{'':<16} -> {LIVE[key](value)}")
             except Exception as exc:  # noqa: BLE001 - this is the diagnosis

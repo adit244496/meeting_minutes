@@ -257,6 +257,27 @@ def _decode(stored: str, key: str) -> str:
         return ""
 
 
+# How each provider's keys begin. Only used to catch a key filed under the
+# wrong provider - never to reject a key for not matching its own pattern,
+# because these formats change and a valid key must always be storable.
+#
+# ElevenLabs and Sarvam both use "sk_" and are left out: an ambiguous signature
+# is worse than none.
+_SIGNATURES: tuple[tuple[str, str, str], ...] = (
+    ("sk-ant-", "anthropic_api_key", "an Anthropic"),
+    ("AIza", "gemini_api_key", "a Google Gemini"),
+    ("sk-", "openai_api_key", "an OpenAI"),
+)
+
+
+def _foreign_key(key: str, value: str) -> str | None:
+    """The provider this value actually looks like, when that is not `key`."""
+    for prefix, owner, article in _SIGNATURES:
+        if value.startswith(prefix):
+            return None if owner == key else article
+    return None
+
+
 def rejected(provider_name: str, key: str, value: str) -> RuntimeError:
     """The provider answered 401: a key is configured, and it is not accepted.
 
@@ -387,6 +408,17 @@ def set_value(db: Session, key: str, value: str, user_id=None) -> Status:
     value = value.strip()
     if credential.choices and value and value not in credential.choices:
         raise ValueError(f"{key} must be one of: {', '.join(credential.choices)}")
+    if credential.secret and value:
+        # Caught here rather than at the provider: one key pasted into two
+        # fields fails later as a plain 401, which reads as "the key is wrong"
+        # rather than "the key is in the wrong box".
+        foreign = _foreign_key(key, value)
+        if foreign:
+            raise ValueError(
+                f"That looks like {foreign} key, not {credential.label}'s. "
+                f"It starts with {value[:7]!r}. Paste it into the {foreign.split()[-1]} "
+                "field instead."
+            )
     if key == "minutes_models" and value:
         ids = [part.strip() for part in value.split(",") if part.strip()]
         unknown = [i for i in ids if i not in MINUTES_MODEL_BY_ID]
