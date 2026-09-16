@@ -361,6 +361,7 @@ pg_dump -Fc meeting_minutes > meeting_minutes_$(date +%F).dump
 | Progress bar never moves, then jumps to done | Only behind nginx: SSE buffered; check `proxy_buffering off` |
 | Meeting stays "uploaded" forever | The worker is not running — `systemctl status meeting_minutes_worker` |
 | Translation stuck at "Queued — waiting for a worker" | Same cause. After 45s the page says so itself. The job is not lost: restart the worker and it runs |
+| Worker logs `KeyError: 'transcripts.translate'` (or any task name) | The **worker process** predates that feature. A Celery worker only knows the tasks that existed when it started, and drops anything else — so a new API queues jobs the old worker silently discards. `sudo systemctl restart meeting_minutes_worker`. **`git pull` alone does not do this**, and these jobs are lost, so run them again |
 | Worker was restarted but still runs the old code | `systemctl restart` on the wrong unit name silently does nothing useful — check `journalctl -u meeting_minutes_worker -n 5` for a recent start line |
 | Service starts then exits immediately | Usually `.env` — systemd is stricter about quoting than a shell |
 | Uploads fail, worker logs `ffmpeg not found on PATH` | `sudo apt install -y ffmpeg` |
