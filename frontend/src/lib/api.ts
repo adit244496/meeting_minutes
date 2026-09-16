@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+/** Where the API lives.
+ *
+ *  A built app defaults to its own origin: the API serves the frontend, so
+ *  "" is right whether that is an IP, a domain, or behind nginx. Only the dev
+ *  server needs an absolute URL, because Vite serves the UI on its own port.
+ *  Setting VITE_API_URL overrides both - but forgetting it no longer points a
+ *  deployed build at localhost, which failed with ERR_CONNECTION_REFUSED. */
+const BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://localhost:8017" : "");
 export const API_BASE = BASE;
 const TOKEN_KEY = "mm.token";
 
