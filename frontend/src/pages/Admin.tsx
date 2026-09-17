@@ -451,7 +451,7 @@ function PeopleSection({ onError, notify }: SectionProps) {
                         {u.role === "admin" ? "Administrator" : "Member"}
                       </span>
                     </td>
-                    <td data-label="Departments">
+                    <td data-label="Departments" className="cell-stack">
                       {u.role === "admin" ? (
                         <span className="dim tiny">Every meeting</span>
                       ) : editingDepts === u.id ? (
@@ -502,7 +502,7 @@ function PeopleSection({ onError, notify }: SectionProps) {
                       )}
                     </td>
                     {enrollmentOn && (
-                      <td data-label="Voice profile" style={{ minWidth: 180 }}>
+                      <td data-label="Voice profile" className="cell-stack" style={{ minWidth: 180 }}>
                         <span style={{ display: "block", width: "100%" }}>
                           <span className="bar" style={{ display: "block", marginBottom: 4 }}>
                             <i style={{ width: `${pct}%` }} />

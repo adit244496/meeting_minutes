@@ -266,8 +266,11 @@ export default function App() {
         <RecordingBar />
         <main className="content">
           <Outlet context={{ user }} />
-          <CompanyLogo className="on-phone company-foot" />
         </main>
+        {/* Outside <main>, so it is the last thing in the column and the
+            content above it takes the slack: on a short page the logo sits on
+            the bottom edge rather than floating under the last card. */}
+        <CompanyLogo className="on-phone company-foot" />
       </div>
     </div>
     </RecorderProvider>

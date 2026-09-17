@@ -1650,11 +1650,15 @@ body { background: var(--bg); }
 .company-logo { display: inline-flex; align-items: center; }
 .company-logo img { max-height: 34px; max-width: 170px; object-fit: contain; }
 .kpis .company-logo { margin-left: auto; padding-left: 8px; }
+/* Sits below the scrolling content as the last row of the column, so the page
+   ends with it: no margin under the logo, and the home-indicator inset only
+   where the device has one. */
 .company-foot {
-  display: flex; justify-content: center; margin: 22px auto 4px;
-  padding-top: 16px; border-top: 1px solid var(--border); width: 100%;
+  display: flex; justify-content: center; width: 100%; margin: 0;
+  padding: 12px 16px calc(8px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--border); background: var(--surface);
 }
-.company-foot img { max-height: 30px; opacity: .85; }
+.company-foot img { max-height: 26px; opacity: .85; }
 .on-phone { display: none; }
 @media (max-width: 900px) {
   .on-wide { display: none; }
@@ -1909,3 +1913,65 @@ body { background: var(--bg); }
 .time-toggle:hover { color: var(--accent); }
 .time-toggle svg { opacity: 0.6; }
 .time-toggle:hover svg { opacity: 1; }
+
+/* ==========================================================================
+   Phone: a shorter top bar, and a settings page that fits a hand
+   ========================================================================== */
+
+@media (max-width: 900px) {
+  /* The bar is chrome, not content: it was 64px tall, a tenth of a phone
+     screen, for two icons and a word. The 44px touch target below applies to
+     buttons in the page body; these two are anchored to the screen edges,
+     where a thumb has the whole corner to aim at. */
+  .topbar { padding: 4px 8px; gap: 6px; min-height: 46px; }
+  .topbar .btn-icon { min-height: 38px; width: 38px; }
+  .topbar .brand .mark { width: 24px; height: 24px; border-radius: 7px; }
+  .topbar .brand .name { font-size: 0.92rem; }
+
+  /* The footer below supplies the trailing space now. */
+  .content { padding-bottom: 10px; }
+}
+
+/* ---------- settings ---------- */
+
+@media (max-width: 760px) {
+  /* Section chips: one line, thumb-sized, scrolling past the screen edge so it
+     is obvious there are more of them. */
+  .settings-nav { margin: 0 -12px; padding: 0 12px 4px; }
+  .settings-nav-item { min-height: 40px; }
+
+  /* People rows become cards (see the table rules), and a cell whose content
+     is a set of chips or checkboxes cannot share a line with its label - it
+     wraps into a narrow ragged column against the right edge. */
+  td.cell-stack {
+    flex-direction: column; align-items: stretch; gap: 6px;
+    padding-top: 8px; padding-bottom: 8px;
+  }
+  td.cell-stack::before { margin-bottom: 1px; }
+  .dept-chips { gap: 6px; }
+
+  /* Title and its actions on separate rows, each full width, rather than the
+     buttons squeezing the name of a department down to two characters. */
+  .card-head { gap: 8px; }
+  .card-head .row-actions { width: 100%; }
+  .card-head .row-actions .btn { flex: 1; }
+  .card-head input[type="text"] { width: 100%; }
+
+  /* An enrolment or department control under its own label, full width. */
+  .table-wrap tbody td > .btn { width: 100%; }
+  .stat-row { gap: 6px; }
+  .stat { padding: 9px 10px; }
+
+  /* Long provider descriptions and key fields: nothing gains from two columns. */
+  .field-block-head { flex-wrap: wrap; gap: 6px; }
+  .provider-fields { margin-top: 12px; }
+  .model-option { padding: 4px 0; }
+  .model-group legend { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+}
+
+@media (max-width: 420px) {
+  /* Three stats across is two characters per label at this width. */
+  .stat-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stat-label { font-size: 0.68rem; }
+  .settings-nav-item .label { font-size: 0.86rem; }
+}
