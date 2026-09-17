@@ -162,7 +162,12 @@ p  { margin: 0; }
   z-index: 40;
 }
 
-.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* A link to the meetings list, so it must not pick up link colour or an
+   underline in either theme. Hover is opacity rather than a colour so it does
+   not fight the white-on-navy rules for the sidebar and top bar. */
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; text-decoration: none; color: inherit; }
+.brand:hover { opacity: .85; }
+.brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 10px; }
 .brand .mark {
   width: 30px; height: 30px; flex: none;
   border-radius: 8px;

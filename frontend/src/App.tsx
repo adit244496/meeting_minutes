@@ -99,15 +99,20 @@ function initials(name: string) {
     .join("");
 }
 
-function Brand() {
+/** The app's mark and name, and the way back to the meetings list.
+ *
+ *  A logo in the corner is the one thing everybody already expects to be a way
+ *  home, so it is a link rather than decoration. `onNavigate` closes the drawer
+ *  on a phone, where the sidebar copy of this is what you can actually reach. */
+function Brand({ onNavigate }: { onNavigate?: () => void }) {
   return (
-    <div className="brand">
+    <Link className="brand" to="/meetings" onClick={onNavigate} title="Go to meetings">
       {/* The same mark as the favicon and the home-screen icon. */}
       <img className="mark" src="/favicon.svg" alt="" width={30} height={30} />
       <span className="name">
         Neo <b>Minutes</b>
       </span>
-    </div>
+    </Link>
   );
 }
 
@@ -191,7 +196,7 @@ export default function App() {
 
       <aside className="sidebar" data-open={navOpen}>
         <div className="sidebar-head">
-          <Brand />
+          <Brand onNavigate={() => setNavOpen(false)} />
           <button
             className="collapse-btn"
             onClick={toggleCollapsed}
