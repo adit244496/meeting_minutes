@@ -144,6 +144,10 @@ def _ensure_columns() -> None:
         # its creator only - see app/access.py.
         ("meetings", "agenda",
          "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS agenda TEXT"),
+        # A playable copy of the recording. Null for meetings processed before
+        # this existed; playback falls back to the original.
+        ("meetings", "playback_key",
+         "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS playback_key VARCHAR(512)"),
         ("meetings", "department_id",
          "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS department_id UUID "
          "REFERENCES departments(id) ON DELETE SET NULL"),

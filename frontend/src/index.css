@@ -1222,11 +1222,10 @@ thead th { font-size: 0.66rem; }
 }
 .menu-label { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-series > summary { color: var(--plum); border-color: color-mix(in srgb, var(--plum) 40%, transparent); }
-.new-meeting { grid-template-columns: minmax(0, 1fr) 170px 180px auto auto; }
-@media (max-width: 900px) {
-  .new-meeting { grid-template-columns: 1fr 1fr; }
-  .new-meeting > input[type="text"] { grid-column: 1 / -1; }
-}
+/* The bar became a flex row when the department picker and the agenda were
+   added to it - how many controls it holds now depends on the person. The
+   grid columns that used to be here were inert against `display: flex` and
+   only misled whoever read them next. */
 
 /* ---------- key highlights ---------- */
 .md-highlights { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
@@ -1933,6 +1932,27 @@ body { background: var(--bg); }
 }
 
 /* ---------- settings ---------- */
+
+@media (max-width: 900px) {
+  /* The one that matters: the compact-density block further up re-asserts a
+     two-column grid at top level, which beats the stacked layout declared
+     inside an earlier media query - a media query adds no specificity, so the
+     later rule simply won. On a phone that left a 196px sidebar and a panel
+     shoved off the right edge of the screen. Re-asserted here, at the end of
+     the cascade, where nothing follows it. */
+  .settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .settings-nav {
+    position: static; flex-direction: row; overflow-x: auto;
+    gap: 8px; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .settings-nav::-webkit-scrollbar { display: none; }
+  .settings-nav-item {
+    flex: none; align-items: center; white-space: nowrap;
+    border: 1px solid var(--border); background: var(--surface); border-radius: 999px;
+  }
+  .settings-nav-item .hint { display: none; }
+  .settings-panel { min-width: 0; }
+}
 
 @media (max-width: 760px) {
   /* Section chips: one line, thumb-sized, scrolling past the screen edge so it

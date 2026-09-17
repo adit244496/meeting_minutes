@@ -777,11 +777,19 @@ export default function MeetingDetail() {
             audioSrc &&
             (audioFailed ? (
               <span className="audio-failed small">
-                This browser cannot play this recording.{" "}
-                <button className="link-btn" onClick={() => download("audio", "recording")}>
-                  Download it
+                {/* A playable copy is made while a meeting is processed, and
+                    for older ones the moment somebody opens the page. Reload
+                    is the honest advice: by then there usually is one. */}
+                This browser cannot play the recording yet — a playable copy is being
+                prepared.{" "}
+                <button className="link-btn" onClick={() => window.location.reload()}>
+                  Reload
                 </button>{" "}
-                to listen.
+                in a moment, or{" "}
+                <button className="link-btn" onClick={() => download("audio", "recording")}>
+                  download it
+                </button>{" "}
+                to listen now.
               </span>
             ) : (
               // eslint-disable-next-line jsx-a11y/media-has-caption

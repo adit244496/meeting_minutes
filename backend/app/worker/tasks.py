@@ -82,6 +82,48 @@ def live_transcribe_task(self, meeting_id: str) -> dict:
     return result
 
 
+@celery.task(name="recordings.transcode", bind=True, max_retries=1, default_retry_delay=60)
+def transcode_playback_task(self, meeting_id: str) -> dict:
+    """Build the playable copy of a recording that has none.
+
+    New meetings get one while they are processed. This is for the ones
+    recorded before that existed: the page asks for a playback URL, notices the
+    copy is missing and queues this, so the recording becomes playable on an
+    iPhone without re-running - and re-paying for - transcription.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from app import pipeline
+    from app.audio import to_playback_m4a
+
+    db = SessionLocal()
+    try:
+        meeting = db.get(Meeting, uuid.UUID(meeting_id))
+        if meeting is None or not meeting.audio_key:
+            return {"built": False, "reason": "no recording"}
+        if meeting.playback_key and storage.exists(meeting.playback_key):
+            return {"built": False, "reason": "already exists"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            raw = storage.download_to(meeting.audio_key, tmpdir / "raw_input")
+            copy = to_playback_m4a(raw, tmpdir / "playback.m4a")
+            key = pipeline.playback_key(meeting.id)
+            storage.put_file(key, copy, content_type="audio/mp4")
+
+        meeting.playback_key = key
+        db.commit()
+        log.info("Built a playback copy for meeting %s", meeting_id)
+        return {"built": True}
+    except Exception as exc:  # noqa: BLE001 - playback falls back to the original
+        log.warning("Could not build a playback copy for meeting %s: %s", meeting_id, exc)
+        db.rollback()
+        return {"built": False, "reason": str(exc)}
+    finally:
+        db.close()
+
+
 @celery.task(name="transcripts.translate", bind=True, max_retries=0)
 def translate_transcript_task(self, meeting_id: str, language: str) -> dict:
     """Translate a meeting's transcript into one language, in the background.
@@ -296,6 +338,11 @@ def purge_old_recordings(self) -> dict:
         for meeting in stale:
             freed += storage.size_bytes(meeting.audio_key) or 0
             storage.delete(meeting.audio_key)
+            # The playable copy is part of the recording, not a separate tier.
+            if meeting.playback_key:
+                freed += storage.size_bytes(meeting.playback_key) or 0
+                storage.delete(meeting.playback_key)
+                meeting.playback_key = None
             meeting.audio_key = None
             meeting.audio_deleted_at = now
         result["recordings_deleted"] = len(stale)

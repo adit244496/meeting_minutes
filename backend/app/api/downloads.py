@@ -718,12 +718,20 @@ def download_audio(
         )
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail)
 
+    # The AAC copy when there is one. A download is for listening to, and a
+    # WebM off an Android phone will not open in QuickTime or on an iPhone
+    # either - the same problem the player has.
+    key = (
+        meeting.playback_key
+        if meeting.playback_key and storage.exists(meeting.playback_key)
+        else meeting.audio_key
+    )
     try:
-        stream = storage.open_stream(meeting.audio_key)
+        stream = storage.open_stream(key)
     except FileNotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording file is missing") from None
 
-    suffix = meeting.audio_key.rsplit(".", 1)[-1].lower() or "bin"
+    suffix = key.rsplit(".", 1)[-1].lower() or "bin"
     media_type = {
         "webm": "audio/webm", "m4a": "audio/mp4", "mp4": "audio/mp4",
         "mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg",

@@ -27,7 +27,11 @@ from app.schemas import (
     MeetingUpdate,
     RelabelRequest,
 )
-from app.worker.tasks import harvest_voiceprint_task, process_meeting_task
+from app.worker.tasks import (
+    harvest_voiceprint_task,
+    process_meeting_task,
+    transcode_playback_task,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
@@ -238,6 +242,12 @@ def audio_url(
         )
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail)
 
+    # Meetings processed before playback copies existed have none. Build one in
+    # the background - this request still answers with the original, which is
+    # all some browsers can be given anyway, and the next load gets the copy.
+    if not meeting.playback_key:
+        transcode_playback_task.delay(str(meeting_id))
+
     token = sign_resource(str(meeting_id))
     return {"url": f"/api/meetings/{meeting_id}/audio?token={token}"}
 
@@ -262,13 +272,17 @@ def stream_audio(
     if meeting is None or not meeting.audio_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No audio for this meeting")
 
-    suffix = meeting.audio_key.rsplit(".", 1)[-1].lower()
+    # The AAC copy when there is one: what the browser recorded is often
+    # unplayable elsewhere - Chrome's WebM is silent on every iPhone - and
+    # carries no duration, which is why the player sits at 0:00.
+    key = meeting.playback_key if meeting.playback_key and storage.exists(meeting.playback_key) else meeting.audio_key
+    suffix = key.rsplit(".", 1)[-1].lower()
     media_type = {
         "webm": "audio/webm", "m4a": "audio/mp4", "mp4": "audio/mp4",
         "mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg",
     }.get(suffix, "application/octet-stream")
 
-    path = storage.local_path(meeting.audio_key)
+    path = storage.local_path(key)
     if path is not None:
         if not path.exists():
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording file is missing")
@@ -277,7 +291,7 @@ def stream_audio(
 
     range_header = request.headers.get("range")
     try:
-        body, length, content_range = storage.open_range(meeting.audio_key, range_header)
+        body, length, content_range = storage.open_range(key, range_header)
     except Exception:  # noqa: BLE001 - a missing object, or a range past the end
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Recording file is missing") from None
 
@@ -461,6 +475,9 @@ def delete_recording(
         )
 
     storage.delete(meeting.audio_key)
+    if meeting.playback_key:
+        storage.delete(meeting.playback_key)
+        meeting.playback_key = None
     meeting.audio_key = None
     meeting.audio_deleted_at = datetime.now(timezone.utc)
     db.commit()
@@ -480,6 +497,8 @@ def delete_meeting(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting not found")
     if meeting.audio_key:
         storage.delete(meeting.audio_key)
+    if meeting.playback_key:
+        storage.delete(meeting.playback_key)
     if meeting.is_live:
         live.stop(str(meeting_id))
     db.delete(meeting)

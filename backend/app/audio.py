@@ -106,6 +106,38 @@ def to_opus(src: Path, dest: Path, bitrate: str = "32k") -> Path:
     return dest
 
 
+def to_playback_m4a(src: Path, dest: Path, bitrate: str = "64k") -> Path:
+    """A copy of the recording that any browser can actually play.
+
+    What MediaRecorder hands us is not a finished file. Chrome records WebM,
+    which Safari cannot play at all - so a meeting recorded on an Android phone
+    is silent on every iPhone. Both browsers also write a stream with no
+    duration in its header, which is why the player sits at 0:00 and refuses to
+    seek even where it does play.
+
+    AAC in MP4 fixes both: it plays everywhere, and re-encoding writes a real
+    duration. `+faststart` moves the index to the front so playback can start
+    before the file has finished downloading. The original is kept untouched -
+    this is a convenience copy, not a replacement.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            _ffmpeg(), "-nostdin", "-y",
+            "-i", str(src),
+            "-vn",
+            "-ac", "1",
+            "-c:a", "aac",
+            "-b:a", bitrate,
+            "-movflags", "+faststart",
+            str(dest),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return dest
+
+
 def extract_sample(src: Path, dest: Path, spans: list[tuple[float, float]]) -> Path:
     """Stitch a few spans of one speaker into a short clip you can play.
 

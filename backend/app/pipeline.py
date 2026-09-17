@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 from app import credentials, features, progress, storage, transcripts
 from app.asr import get_provider
 from app.asr.base import ProviderBusyError
-from app.audio import duration_seconds, to_wav16k_mono
+from app.audio import duration_seconds, to_playback_m4a, to_wav16k_mono
 from app.config import settings
 from app.lang import analyse
 from app.minutes import catalog
@@ -118,6 +118,7 @@ def process_meeting(
             progress.publish(mid, "prepare", 5, "Preparing audio")
             wav = to_wav16k_mono(raw, tmpdir / "audio.wav")
             meeting.duration_seconds = duration_seconds(wav)
+            _store_playback_copy(db, meeting, raw, tmpdir)
             db.commit()
             timed("prepare")
 
@@ -283,6 +284,27 @@ def _replace_transcript(db: Session, meeting: Meeting, result, resolutions) -> N
     # Translations were made from the transcript that has just been replaced.
     transcripts.clear(db, meeting.id)
     db.flush()
+
+
+def playback_key(meeting_id) -> str:
+    return f"meetings/{meeting_id}/playback.m4a"
+
+
+def _store_playback_copy(db: Session, meeting: Meeting, raw: Path, tmpdir: Path) -> None:
+    """Make a copy of the recording that every browser can play.
+
+    Best-effort on purpose. This is a convenience for the player, and a meeting
+    whose transcript and minutes are fine must not fail because a second
+    encode did - playback simply falls back to the original, as it did before
+    this existed.
+    """
+    try:
+        copy = to_playback_m4a(raw, tmpdir / "playback.m4a")
+        key = playback_key(meeting.id)
+        storage.put_file(key, copy, content_type="audio/mp4")
+        meeting.playback_key = key
+    except Exception:  # noqa: BLE001 - never fail a meeting over this
+        log.warning("Could not build a playback copy for meeting %s", meeting.id, exc_info=True)
 
 
 def segment_row(meeting_id: uuid.UUID, idx: int, seg, fallback_language: str | None, offset_s: float = 0.0) -> Segment:

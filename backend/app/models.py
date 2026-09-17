@@ -196,6 +196,12 @@ class Meeting(Base):
         Enum(AudioSource, name="audio_source"), default=AudioSource.upload
     )
     audio_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # An AAC copy of the recording, made because what the browser records is
+    # not playable everywhere: Chrome's WebM is silent on every iPhone, and
+    # neither browser writes a duration, so the player sits at 0:00. Null until
+    # the meeting has been processed, and for meetings recorded before this
+    # existed - playback falls back to the original.
+    playback_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # Set when the recording is purged by the retention job. The meeting, its
     # transcript and its minutes all survive - only the audio goes.
     audio_deleted_at: Mapped[datetime | None] = mapped_column(
