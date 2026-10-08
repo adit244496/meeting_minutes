@@ -27,9 +27,14 @@ EMBEDDING_DIM = 192
 
 
 NOT_INSTALLED = (
-    "Speaker identification is not available in this build. The image was built "
-    "without torch and speechbrain to keep it small. Rebuild with "
-    "`docker compose build --build-arg WITH_SPEAKER_ID=true api` to enable it."
+    "Speaker identification needs torch and speechbrain, which are not installed "
+    "here - they add ~2GB, so they are optional. On a server install: "
+    "`venv/bin/pip install torch==2.5.1 torchaudio==2.5.1 "
+    "--index-url https://download.pytorch.org/whl/cpu` then "
+    "`venv/bin/pip install -r requirements-speaker.txt`, and restart both "
+    "services. With Docker: `docker compose build --build-arg "
+    "WITH_SPEAKER_ID=true api`. Until then, turn off \"Recognise people by "
+    "voice\" under Settings > Features and speakers stay numbered."
 )
 
 

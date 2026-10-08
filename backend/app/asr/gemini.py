@@ -43,6 +43,9 @@ log = logging.getLogger(__name__)
 # Fraction of the audio that must be covered by returned segments before we
 # accept the transcript as complete.
 MIN_COVERAGE = 0.75
+# Gemini's ceiling for one response. Named so the error that reports hitting it
+# can say what it was.
+_OUTPUT_TOKEN_LIMIT = 65536
 
 # Codes that mean "busy, try later" rather than "this request is wrong".
 BUSY_CODES = (429, 500, 502, 503, 504)
@@ -196,7 +199,8 @@ class GeminiProvider:
             )
             if "MAX_TOKENS" in str(finish_reason or "").upper():
                 raise RuntimeError(
-                    "Gemini hit its output token limit before finishing the transcript. "
+                    f"Gemini hit its output token limit {_OUTPUT_TOKEN_LIMIT:,} before "
+                    "finishing the transcript, so it would have been missing its end. "
                     "Bengali and Hindi tokenize ~3x more heavily than English, so long "
                     "meetings in those languages are the likeliest to hit this. Split the "
                     "recording or use a dedicated ASR provider for meetings this long."
@@ -373,7 +377,7 @@ class GeminiProvider:
             response_mime_type="text/plain",
             # The transcript is model output, so it needs the full output
             # budget - Bengali and Hindi tokenize heavily.
-            max_output_tokens=65536,
+            max_output_tokens=_OUTPUT_TOKEN_LIMIT,
             temperature=0,
             # Verbatim transcription needs no reasoning, and thinking tokens are
             # generated before the first word of output - on a long meeting they
@@ -569,20 +573,26 @@ def _normalise_speaker(label: str) -> str:
 
 
 def _assert_complete(segments: list[TranscriptSegment], total_seconds: float) -> None:
-    """Fail loudly if the model stopped early.
+    """Note how much of the audio the transcript covers.
 
-    Hitting the output token limit truncates the transcript without any error,
-    which would otherwise land in the database as a complete meeting that is
-    quietly missing its second half.
+    This used to fail the meeting, on the theory that short coverage meant the
+    output token limit had truncated the transcript. It is a bad test for that:
+    a recording where people stop talking before the recording stops - someone
+    reaching for the button, a pause at the end - covers a fraction of its own
+    duration and is completely correct. It failed a 84-second meeting at 42%
+    while blaming a 65k token limit that 84 seconds cannot reach.
+
+    Real truncation has a reliable signal, finish_reason=MAX_TOKENS, and that
+    is checked where the response arrives. Here we only log, and the pipeline
+    decides what to tell the user - losing a good transcript is the worse error.
     """
     if not segments or total_seconds <= 0:
         return
 
     covered = max(s.end for s in segments)
     if covered < total_seconds * MIN_COVERAGE:
-        raise RuntimeError(
-            f"Gemini transcript covers only {covered:.0f}s of {total_seconds:.0f}s audio "
-            f"({covered / total_seconds:.0%}). The output token limit was probably hit - "
-            "likely on Bengali or Hindi, which tokenize ~3x more heavily than English. "
-            "Split the recording or use a dedicated ASR provider for meetings this long."
+        log.info(
+            "Transcript covers %.0fs of %.0fs audio (%.0f%%) - trailing silence, or the "
+            "model stopped early",
+            covered, total_seconds, 100 * covered / total_seconds,
         )

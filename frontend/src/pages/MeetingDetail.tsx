@@ -704,9 +704,23 @@ export default function MeetingDetail() {
       )}
 
       {meeting.error && !isActive && meeting.status !== "failed" && (
+        // Something went wrong without costing the transcript - speakers left
+        // unnamed, a transcript that stops short of the audio. Reprocessing is
+        // the fix for most of them, so it is one click from the explanation.
         <div className="alert alert-warn compact-gap">
           <IconAlert size={15} />
           <span className="grow">{meeting.error}</span>
+          {!meeting.audio_deleted_at && (
+            <button
+              className="btn btn-sm"
+              onClick={() => run(() => api.reprocess(id).then(load), "Could not reprocess")}
+              disabled={busy}
+              title="Transcribe the recording again"
+            >
+              <IconRefresh size={13} />
+              Reprocess
+            </button>
+          )}
         </div>
       )}
 

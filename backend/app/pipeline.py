@@ -107,6 +107,11 @@ def process_meeting(
         log.info("Meeting %s: %s took %.1fs", mid, stage, now - mark)
         mark = now
 
+    # Things that went wrong without being worth losing the meeting over. They
+    # end up on meeting.error, which the page shows as a notice rather than a
+    # failure when the meeting itself succeeded.
+    notes: list[str] = []
+
     try:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
@@ -138,6 +143,17 @@ def process_meeting(
             )
             if not result.segments:
                 raise RuntimeError("ASR returned an empty transcript")
+            spoken = max(s.end for s in result.segments)
+            if meeting.duration_seconds and spoken < meeting.duration_seconds * 0.75:
+                # Either the recording ends in silence, or the model stopped
+                # early. We cannot tell which from here, and the transcript is
+                # worth keeping either way - so say what was transcribed and
+                # let whoever was in the room judge it.
+                notes.append(
+                    f"The transcript covers the first {spoken:.0f}s of "
+                    f"{meeting.duration_seconds:.0f}s of audio. If people were still "
+                    "talking after that, reprocess the meeting."
+                )
             meeting.asr_provider = provider.name
             db.commit()
             timed("transcribe")
@@ -155,12 +171,25 @@ def process_meeting(
             # AUTO_IDENTIFY_SPEAKERS in the environment still forces it on.
             if settings.auto_identify_speakers or features.is_enabled(db, "speaker_matching_enabled"):
                 progress.publish(mid, "speakers", 89, "Matching voices against enrolled users")
-                enrolled = load_enrolled_voices(db)
-                resolutions = identify_speakers(wav, result.segments, enrolled)
-                named = sum(1 for r in resolutions if r.user_id)
-                progress.publish(
-                    mid, "speakers", 91, f"Identified {named} of {len(resolutions)} speakers"
-                )
+                try:
+                    enrolled = load_enrolled_voices(db)
+                    resolutions = identify_speakers(wav, result.segments, enrolled)
+                    named = sum(1 for r in resolutions if r.user_id)
+                    progress.publish(
+                        mid, "speakers", 91, f"Identified {named} of {len(resolutions)} speakers"
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # Putting names to voices is a bonus on top of the
+                    # transcript, so it must never cost the transcript. The
+                    # usual cause is the speaker packages not being installed
+                    # while the toggle is on - which failed whole meetings that
+                    # had transcribed perfectly well.
+                    log.warning("Speaker identification failed for meeting %s: %s", mid, exc)
+                    notes.append(f"Speakers were not identified: {exc}")
+                    resolutions = label_speakers_only(result.segments)
+                    progress.publish(
+                        mid, "speakers", 91, "Speakers left unnamed — see the meeting for why"
+                    )
             else:
                 resolutions = label_speakers_only(result.segments)
 
@@ -202,6 +231,11 @@ def process_meeting(
                     done_message = "Transcript ready - minutes could not be generated"
                 db.commit()
                 timed("minutes")
+
+            if notes:
+                # Appended, so a minutes failure recorded above is not lost.
+                meeting.error = "; ".join(filter(None, [meeting.error, *notes]))
+                db.commit()
 
             log.info("Meeting %s processed in %.1fs", mid, time.monotonic() - started)
             progress.publish(mid, "done", 100, done_message)
